@@ -1,7 +1,7 @@
 {
   "domain": "lithe_audio",
   "name": "Lithe Audio",
-  "version": "1.3.3",
+  "version": "1.3.5",
   "config_flow": true,
   "documentation": "https://github.com/litheaudio/ha-lithe-audio",
   "issue_tracker": "https://github.com/litheaudio/ha-lithe-audio/issues",

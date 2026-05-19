@@ -60,7 +60,6 @@ async def async_setup_entry(
             from .group import (
                 get_group_manager,
                 LitheGroupMediaPlayer,
-                create_cast_group_proxies,
             )
             mgr = get_group_manager(hass)
             if mgr:
@@ -76,19 +75,15 @@ async def async_setup_entry(
                     _LOGGER.info("Lithe groups changed — restart required to fully apply add/remove")
                 mgr.register_listener(_on_groups_changed)
 
-            # Cast group proxy entities — one media_player per Google
-            # Cast group, hidden from the dashboard but visible in the
-            # stock player Group picker (HA filters by integration, not
-            # by device boundary, so all Lithe speakers see them).
-            # Selecting one routes audio through the underlying Cast
-            # group entity.
-            cast_proxies = create_cast_group_proxies(hass, entry.data["host"])
-            if cast_proxies:
-                entities.extend(cast_proxies)
-                _LOGGER.info(
-                    "Created %d Cast group proxy entities for join picker",
-                    len(cast_proxies),
-                )
+            # Note: Cast group proxies are NOT created. Earlier attempts
+            # to put Cast groups in HA's stock Group/Join picker proved
+            # confusing — the join picker is multi-select toggle UI
+            # which doesn't match Cast group routing semantics ("send my
+            # audio TO this Cast group" is a single-target operation,
+            # not a join). Cast groups are selected via the dedicated
+            # select.lithe_audio_*_cast_group entity instead. The Group
+            # icon then correctly shows only Lithe speakers — useful for
+            # pairing PRO 2 with the Sub woofer.
         except Exception as e:
             _LOGGER.error("Failed to set up group entities: %s", e)
 
@@ -119,13 +114,14 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # them. They still appear in `source_name` attribute when active.
         # (This matches the Sonos integration pattern — Sonos only shows
         # locally-switchable sources in its source picker.)
+        # Local inputs that show in the source dropdown.
+        # AUX In, SPDIF In, Bluetooth have been MOVED to Browse Media
+        # per user UX request — they appear as top-level browse entries
+        # with icons there. Favourites and Direct URL stay in source.
         _ACTIVATABLE_SOURCES = {
             0,   # No Source (releases current)
             5,   # USB
-            13,  # AUX In
-            14,  # SPDIF In
             17,  # Direct URL
-            19,  # Bluetooth
             23,  # Favourites
         }
         src_ids = PRODUCT_SOURCES.get(self._product, list(SOURCES.keys()))
@@ -135,8 +131,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             and s in _ACTIVATABLE_SOURCES
             and SOURCES[s] != "No Source"
         ]
-        # Reverse-lookup name → id (incl. passive sources so we can
-        # display them as source_name when they activate themselves)
+        # Reverse-lookup name → id (still includes AUX/SPDIF/BT so
+        # Browse Media can switch to them and source_name still
+        # displays them when they activate themselves)
         self._source_id_by_name = {SOURCES[s]: s for s in src_ids if s in SOURCES}
 
         # Grace timer for available property — set in available() the
@@ -713,6 +710,14 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             await self._client.async_play_favourite(slot)
             return
 
+        # Local input switch from Browse Media (AUX/SPDIF/Bluetooth).
+        # These were moved out of the source dropdown into Browse Media
+        # — picking one here switches the speaker's MB#50 source.
+        if media_id.startswith("lithe_source:"):
+            source_name = media_id[len("lithe_source:"):]
+            await self.async_select_source(source_name)
+            return
+
         # HA-side local favourite — saved URL plays via play_url
         if media_id.startswith("lithe_local_fav:"):
             slot = int(media_id[len("lithe_local_fav:"):])
@@ -899,16 +904,57 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             thumbnail=None,
         ))
 
-        # 3) HA media sources (Radio Browser, My Media, TTS, etc.)
+        # 3) Local inputs as browse entries (moved from source dropdown
+        # per user request). Each plays immediately when picked.
+        for label, source_name, icon in (
+            ("🔌 AUX In",       "AUX In",    "mdi:audio-input-rca"),
+            ("💿 SPDIF In",     "SPDIF In",  "mdi:toslink"),
+            ("🎧 Bluetooth",    "Bluetooth", "mdi:bluetooth"),
+        ):
+            if source_name in self._source_id_by_name:
+                children.append(BrowseMedia(
+                    title=label,
+                    media_class=MediaClass.URL,
+                    media_content_id=f"lithe_source:{source_name}",
+                    media_content_type=MediaType.MUSIC,
+                    can_play=True,
+                    can_expand=False,
+                ))
+
+        # 4) HA media sources (Radio Browser, My Media, TTS, etc.)
+        # Filter out non-audio sources (Image, Image upload, AI generated
+        # images, Camera) per user request — these aren't useful on an
+        # audio-only speaker.
+        _EXCLUDED_SOURCES = {
+            "image", "image_upload", "ai_task", "ai_generated_images",
+            "ai_image", "camera",
+        }
         try:
             ms_root = await media_source.async_browse_media(
                 self.hass, None,
                 content_filter=lambda item: item.media_content_type.startswith("audio/")
                                             or item.media_content_type in _PLAYABLE_TYPES,
             )
-            # Add each top-level source as an expandable child
             if ms_root and ms_root.children:
                 for c in ms_root.children:
+                    # Skip non-audio sources by their media_content_id domain
+                    skip = False
+                    if c.media_content_id and c.media_content_id.startswith("media-source://"):
+                        # URI shape: media-source://<domain>/...
+                        try:
+                            domain = c.media_content_id[len("media-source://"):].split("/", 1)[0]
+                            if domain.lower() in _EXCLUDED_SOURCES:
+                                skip = True
+                        except Exception:
+                            pass
+                    # Also skip by title — some sources use display names
+                    title_lower = (c.title or "").lower()
+                    if any(bad in title_lower for bad in (
+                        "image", "camera", "ai generated", "ai task", "upload",
+                    )):
+                        skip = True
+                    if skip:
+                        continue
                     children.append(c)
         except Exception as e:
             _LOGGER.warning("Failed to browse HA media sources: %s", e)

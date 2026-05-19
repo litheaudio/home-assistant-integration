@@ -104,6 +104,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "card_resource.py": "Probe filesystem in executor",
             "switch.py": "2-way sync (factually verified 2026-05-18)",
             "number.py": "2-way sync (factually verified 2026-05-18)",
+            "media_player.py": "_EXCLUDED_SOURCES",
         }
         _stale: list[str] = []
         for _fname, _marker in _expected_markers.items():
@@ -144,9 +145,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data = {**entry.data, CONF_PRODUCT: inferred}
         hass.config_entries.async_update_entry(entry, data=new_data)
 
-    # Cleanup: v1.1.98 registered Cast group proxy entities and devices
-    # under the lithe_audio domain. v1.1.99 removed that approach.
-    # Remove any leftover registry entries so they don't show as ghosts.
+    # Cleanup: earlier versions registered Cast group proxy entities
+    # under the lithe_audio domain. v1.3.5 removes that approach
+    # entirely (Cast groups are selected via the dedicated select
+    # entity, not the join picker). Remove any leftover proxy registry
+    # entries so they don't show as ghosts.
     try:
         from homeassistant.helpers import device_registry as dr, entity_registry as er
         ent_reg = er.async_get(hass)
@@ -161,7 +164,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for eid in stale_entity_ids:
             ent_reg.async_remove(eid)
             _LOGGER.info("Removed stale Cast proxy entity: %s", eid)
-        # Remove stale proxy DEVICES (identifier starts with cast_proxy_)
+        # Remove stale standalone proxy DEVICES (v1.1.98 leftovers)
         for dev in list(dev_reg.devices.values()):
             for domain, ident in dev.identifiers:
                 if domain == DOMAIN and isinstance(ident, str) and ident.startswith("cast_proxy_"):
