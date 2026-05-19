@@ -179,7 +179,11 @@ OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]
 
 # ── Per-product chime counts ────────────────────────────────────────────────
 PRODUCT_CHIMES = {
-    PRODUCT_PRO2:  15,
+    # Per official LUCI v14.1 spec §6.45 (Tx_MB#80 Play Audio Index):
+    # "Device supports up to 10 indexes" (play 1 .. play 10).
+    # Earlier customer-facing API doc claimed 15 for PRO2; that's not
+    # what the wire protocol exposes — slots 11+ return NI (No Index).
+    PRODUCT_PRO2:  10,
     PRODUCT_V3:    6,
     PRODUCT_IO1:   10,
     PRODUCT_V2:    0,
