@@ -817,6 +817,59 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
             # No Cast group active — play locally only
             await self._client.async_play_url(media_id)
+            # Deferred user-visible feedback. The speaker should auto-
+            # switch to Direct URL (source 17) and start playing within
+            # ~2-3 seconds. If it doesn't, the audio path is probably
+            # owned by an external source (Spotify Connect, AirPlay,
+            # Cast) which silently blocks LSx output per LUCI spec
+            # §10.35. Surface this to the user instead of failing silently.
+            async def _check_playback():
+                import asyncio
+                await asyncio.sleep(3.0)
+                st = self._client.state
+                if st.source_id != 17 or st.play_state not in (1, "Playing"):
+                    blocking_src = {
+                        1:  "AirPlay", 4:  "Spotify Connect", 24: "Google Cast",
+                        21: "Deezer",  22: "Tidal",            27: "Roon",
+                        28: "Alexa",    9: "TuneIn",            7: "Melon",
+                    }.get(st.source_id)
+                    if blocking_src:
+                        msg = (
+                            f"Playback request sent but speaker is still on "
+                            f"**{blocking_src}** (source id {st.source_id}). "
+                            f"External sources silently block Direct URL "
+                            f"playback per LUCI spec §10.35. Stop the "
+                            f"external session from the original app, or "
+                            f"switch to a local source first."
+                        )
+                    elif st.source_id == 0:
+                        msg = (
+                            "Playback request sent but speaker is in "
+                            "No Source state. The audio path may be "
+                            "locked — try Bluetooth toggle or reboot."
+                        )
+                    else:
+                        msg = (
+                            f"Playback request sent but speaker hasn't "
+                            f"switched to Direct URL yet (still source "
+                            f"{st.source_id}, state {st.play_state!r}). "
+                            f"If the stream URL is reachable on your "
+                            f"network this should resolve in a few seconds."
+                        )
+                    try:
+                        await self.hass.services.async_call(
+                            "persistent_notification", "create",
+                            {
+                                "title": f"Lithe Audio — {self.name}",
+                                "message": msg,
+                                "notification_id":
+                                    f"lithe_play_stuck_{self._entry.entry_id}",
+                            },
+                            blocking=False,
+                        )
+                    except Exception:
+                        pass
+            self.hass.async_create_task(_check_playback())
             return
 
         _LOGGER.warning("Unsupported play_media: type=%s id=%s", media_type, media_id)

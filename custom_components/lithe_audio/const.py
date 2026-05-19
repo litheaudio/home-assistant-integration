@@ -219,6 +219,8 @@ PRODUCT_CAPS = {
         "loudness_switch":  False,
         "nightmode_switch": True,
         "bluetooth_switch": True,
+        "aux_in_switch":    True,
+        "spdif_in_switch":  True,
     },
     PRODUCT_V3: {
         "chimes":           6,
@@ -231,6 +233,8 @@ PRODUCT_CAPS = {
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
+        "aux_in_switch":    False,
+        "spdif_in_switch":  False,
     },
     PRODUCT_IO1: {
         "chimes":           10,
@@ -243,6 +247,8 @@ PRODUCT_CAPS = {
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
+        "aux_in_switch":    False,
+        "spdif_in_switch":  False,
     },
     PRODUCT_V2: {
         "chimes":           0,
@@ -255,6 +261,8 @@ PRODUCT_CAPS = {
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
+        "aux_in_switch":    False,
+        "spdif_in_switch":  False,
     },
     PRODUCT_PRO: {
         "chimes":           6,
@@ -267,6 +275,8 @@ PRODUCT_CAPS = {
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
+        "aux_in_switch":    False,
+        "spdif_in_switch":  False,
     },
     PRODUCT_MICRO: {
         "chimes":           0,
@@ -279,6 +289,8 @@ PRODUCT_CAPS = {
         "loudness_switch":  False,
         "nightmode_switch": False,
         "bluetooth_switch": True,    # BT on; no DSP for now
+        "aux_in_switch":    False,
+        "spdif_in_switch":  False,
     },
 }
 

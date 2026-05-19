@@ -31,6 +31,10 @@ async def async_setup_entry(
         entities.append(LitheLoudnessSwitch(coordinator, entry))
     if c["bluetooth_switch"]:
         entities.append(LitheBluetoothSwitch(coordinator, entry))
+    if c.get("aux_in_switch"):
+        entities.append(LitheAuxInSwitch(coordinator, entry))
+    if c.get("spdif_in_switch"):
+        entities.append(LitheSpdifInSwitch(coordinator, entry))
 
     if entities:
         async_add_entities(entities)
@@ -224,3 +228,80 @@ class LitheBluetoothSwitch(_LitheBaseSwitch):
             await self._client._send(0x01, MB_BT_STATUS, "")  # noqa: SLF001
         except Exception:
             pass
+
+
+class _LithePassthroughSwitch(_LitheBaseSwitch):
+    """Base class for AUX In / SPDIF In passthrough switches.
+
+    These switches let the user toggle whether the speaker is routing
+    audio through its line input (AUX/SPDIF). Unlike Bluetooth, these
+    aren't radios — they're physical inputs always carrying signal —
+    so "on" means "actively use this input as the audio source" and
+    "off" means "release this input and stop output from it".
+
+    Wire protocol:
+      - ON:  SET MB#50 <source_id>   (13 = AUX In, 14 = SPDIF In)
+      - OFF: SET MB#50 0             (No Source — releases audio path)
+    """
+
+    _SOURCE_ID: int = 0  # subclasses override
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._optimistic_until: float = 0.0
+        self._optimistic_state: bool = False
+
+    @property
+    def is_on(self) -> bool:
+        import time
+        if time.monotonic() < self._optimistic_until:
+            return self._optimistic_state
+        return self._client.state.source_id == self._SOURCE_ID
+
+    async def async_turn_on(self, **kwargs) -> None:
+        import time
+        from .const import MB_SOURCE
+        self._optimistic_state = True
+        self._optimistic_until = time.monotonic() + 3.0
+        self.async_write_ha_state()
+        await self._client._send(0x02, MB_SOURCE, str(self._SOURCE_ID))  # noqa: SLF001
+        try:
+            await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
+        except Exception:
+            pass
+
+    async def async_turn_off(self, **kwargs) -> None:
+        import time
+        from .const import MB_SOURCE
+        self._optimistic_state = False
+        self._optimistic_until = time.monotonic() + 3.0
+        self.async_write_ha_state()
+        await self._client._send(0x02, MB_SOURCE, "0")  # noqa: SLF001
+        try:
+            await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
+        except Exception:
+            pass
+
+
+class LitheAuxInSwitch(_LithePassthroughSwitch):
+    """AUX In passthrough toggle."""
+
+    _attr_name = "AUX In"
+    _attr_icon = "mdi:audio-input-rca"
+    _SOURCE_ID = 13
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_aux_in"
+
+
+class LitheSpdifInSwitch(_LithePassthroughSwitch):
+    """SPDIF In passthrough toggle."""
+
+    _attr_name = "SPDIF In"
+    _attr_icon = "mdi:toslink"
+    _SOURCE_ID = 14
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_spdif_in"
