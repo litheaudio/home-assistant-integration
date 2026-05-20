@@ -718,6 +718,34 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             await self.async_select_source(source_name)
             return
 
+        # Toggle a passthrough source (AUX/SPDIF/Bluetooth). Browse
+        # Media doesn't support inline switches, so we use a tap-toggle
+        # pattern: if already active, release the audio path; otherwise
+        # activate this source.
+        if media_id.startswith("lithe_toggle:"):
+            source_name = media_id[len("lithe_toggle:"):]
+            target_id = self._source_id_by_name.get(source_name)
+            if target_id is None:
+                _LOGGER.warning("lithe_toggle: unknown source %r", source_name)
+                return
+            current = self._client.state.source_id
+            from .const import MB_SOURCE
+            if current == target_id:
+                # Already active → turn OFF (release audio path)
+                _LOGGER.info(
+                    "Toggle %s OFF (was active) — SET MB#50 0",
+                    source_name,
+                )
+                await self._client._send(0x02, MB_SOURCE, "0")  # noqa: SLF001
+            else:
+                # Not active → turn ON via select_source
+                _LOGGER.info(
+                    "Toggle %s ON — switching from source %d",
+                    source_name, current,
+                )
+                await self.async_select_source(source_name)
+            return
+
         # HA-side local favourite — saved URL plays via play_url
         if media_id.startswith("lithe_local_fav:"):
             slot = int(media_id[len("lithe_local_fav:"):])
@@ -957,22 +985,41 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             thumbnail=None,
         ))
 
-        # 3) Local inputs as browse entries (moved from source dropdown
-        # per user request). Each plays immediately when picked.
-        for label, source_name, icon in (
-            ("🔌 AUX In",       "AUX In",    "mdi:audio-input-rca"),
-            ("💿 SPDIF In",     "SPDIF In",  "mdi:toslink"),
-            ("🎧 Bluetooth",    "Bluetooth", "mdi:bluetooth"),
+        # 3) Local inputs as toggle entries in Browse Media.
+        #
+        # HA's BrowseMedia API does not support inline sliders/switches
+        # in a row — only "play" (tap) and "expand" (drill-in). To get
+        # on/off semantics we:
+        #   - Show the current state in the row title (ON / OFF)
+        #   - Treat a tap as a toggle: if currently active, release
+        #     (SET MB#50 0); otherwise activate (SET MB#50 <source_id>)
+        #
+        # For a true slider UI use the switch entities created by this
+        # integration:
+        #   switch.lithe_audio_<name>_aux_in
+        #   switch.lithe_audio_<name>_spdif_in
+        #   switch.lithe_audio_<name>_bluetooth
+        current_source = self._client.state.source_id
+        for label_base, source_name, source_id in (
+            ("🔌 AUX In",     "AUX In",    13),
+            ("💿 SPDIF In",   "SPDIF In",  14),
+            ("🎧 Bluetooth",  "Bluetooth", 19),
         ):
-            if source_name in self._source_id_by_name:
-                children.append(BrowseMedia(
-                    title=label,
-                    media_class=MediaClass.URL,
-                    media_content_id=f"lithe_source:{source_name}",
-                    media_content_type=MediaType.MUSIC,
-                    can_play=True,
-                    can_expand=False,
-                ))
+            if source_name not in self._source_id_by_name:
+                continue
+            is_active = (current_source == source_id)
+            state_label = "● ON" if is_active else "○ OFF"
+            title = f"{label_base} — {state_label}"
+            children.append(BrowseMedia(
+                title=title,
+                media_class=MediaClass.URL,
+                # lithe_toggle: prefix signals the play_media handler
+                # to toggle the source rather than just select it
+                media_content_id=f"lithe_toggle:{source_name}",
+                media_content_type=MediaType.MUSIC,
+                can_play=True,
+                can_expand=False,
+            ))
 
         # 4) HA media sources (Radio Browser, My Media, TTS, etc.)
         # Filter out non-audio sources (Image, Image upload, AI generated
