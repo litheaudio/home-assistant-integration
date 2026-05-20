@@ -81,14 +81,16 @@ class LitheChimeButton(ButtonEntity):
     minimum latency between press and wire."""
 
     _attr_has_entity_name = True
-    _attr_icon = "mdi:music-note"
+    _attr_icon = "mdi:bell-ring"
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry, slot: int):
         self._coordinator = coordinator
         self._client = coordinator.client
         self._entry = entry
         self._slot = slot
-        self._attr_name = f"Chime {slot}"
+        # "Chimes — N" prefix groups all chime entities together
+        # alphabetically in the Controls section.
+        self._attr_name = f"Chimes — Chime {slot:02d}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_chime_{slot}"
 
     @property
@@ -149,7 +151,8 @@ class LitheSaveFavouriteButton(ButtonEntity):
         self._client = coordinator.client
         self._entry = entry
         self._slot = slot
-        self._attr_name = f"Save to Favourite {slot}"
+        # "Favourites — Save N" groups under Favourites section in Controls
+        self._attr_name = f"Favourites — Save to Favourite {slot}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_save_fav_{slot}"
 
     @property
@@ -174,14 +177,15 @@ class LithePlayFavouriteButton(ButtonEntity):
     """
 
     _attr_has_entity_name = True
-    _attr_icon = "mdi:play-circle-outline"
+    _attr_icon = "mdi:heart"
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry, slot: int) -> None:
         self._coord = coordinator
         self._client = coordinator.client
         self._entry = entry
         self._slot = slot
-        self._attr_name = f"Play Favourite {slot}"
+        # "Favourites — Play N" groups under Favourites section in Controls
+        self._attr_name = f"Favourites — Play Favourite {slot}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_play_fav_{slot}"
 
     @property
@@ -239,7 +243,7 @@ class LitheHeartButton(ButtonEntity):
         self._coord = coordinator
         self._client = coordinator.client
         self._entry = entry
-        self._attr_name = "♥ Save Current Track"
+        self._attr_name = "Favourites — ♥ Save Current Track"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_heart_save"
 
     @property
