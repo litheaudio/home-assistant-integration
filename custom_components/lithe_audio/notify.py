@@ -125,6 +125,14 @@ async def _tannoy_start(
                 )
         except Exception as e:
             _LOGGER.error("Tannoy play_url failed: %s", e)
+            raise
+    elif not first_coord:
+        # No speakers could be resolved — raise so the caller knows
+        # to fall back to direct URL playback instead of silent failure.
+        raise RuntimeError(
+            f"Tannoy: none of the requested speakers {speakers!r} could "
+            f"be resolved to a coordinator. Stale config entry or wrong IP?"
+        )
 
 
 async def _tannoy_end(hass: HomeAssistant, speakers: list[str]) -> None:

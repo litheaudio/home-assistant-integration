@@ -829,7 +829,13 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         if announce and media_id.startswith(("http://", "https://")):
             # Route through tannoy notify service which handles
             # save/pause/volume/play. Use extra.volume if provided.
+            #
+            # If tannoy can't resolve this speaker (stale config, multi-
+            # speaker setup with mixed IPs, missing coordinator), fall
+            # back to direct URL playback so the user still hears the
+            # announcement instead of silent failure.
             volume = int(extra.get("volume", 70))
+            tannoy_ok = False
             try:
                 await self.hass.services.async_call(
                     "notify", "lithe_tannoy",
@@ -841,14 +847,48 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                             "speakers": [self._client.host],
                         },
                     },
-                    blocking=False,
+                    blocking=True,  # wait so we know success/failure
                 )
+                tannoy_ok = True
                 _LOGGER.info(
                     "play_media announce: routed to lithe_tannoy "
                     "(url=%s volume=%d)", media_id, volume,
                 )
             except Exception as e:
-                _LOGGER.error("Announce via tannoy failed: %s", e)
+                _LOGGER.warning(
+                    "Announce via tannoy failed: %s — falling back to "
+                    "direct URL playback on this speaker", e,
+                )
+            if not tannoy_ok:
+                # Fallback: just play the URL directly so the
+                # announcement is audible. Less polished (no pause/save/
+                # restore), but better than silent failure.
+                try:
+                    await self._client.async_play_url(media_id)
+                    _LOGGER.info(
+                        "Announce fallback: playing %s directly on %s",
+                        media_id, self.entity_id,
+                    )
+                except Exception as e:
+                    _LOGGER.error("Announce fallback also failed: %s", e)
+                    try:
+                        await self.hass.services.async_call(
+                            "persistent_notification", "create",
+                            {
+                                "title": f"Lithe Audio — {self.name}",
+                                "message": (
+                                    f"❌ TTS / announcement failed.\n\n"
+                                    f"Both Tannoy and direct URL "
+                                    f"playback errored. URL was:\n"
+                                    f"`{media_id}`\n\nError: {e}"
+                                ),
+                                "notification_id":
+                                    f"lithe_play_progress_{self._entry.entry_id}",
+                            },
+                            blocking=False,
+                        )
+                    except Exception:
+                        pass
             return
 
         # Regular play (no announce). If user selected a Cast group as

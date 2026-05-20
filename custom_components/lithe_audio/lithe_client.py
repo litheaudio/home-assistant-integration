@@ -415,12 +415,54 @@ class LitheClient:
     async def async_play_url(self, url: str) -> None:
         """Push a direct stream URL to the speaker (MB#41 DIRECT).
 
-        After sending, schedule a metadata refresh so the HA media player
-        shows the new track info promptly. The speaker should auto-push
-        MB#42 (Now Playing) when the source switches to Direct URL, but
-        we GET it explicitly as a safety net for firmware that delays
-        the push.
+        Source-release preflight: per LUCI spec §10.35, external sources
+        (Spotify Connect, AirPlay, Cast, Tidal, Deezer, Favourites etc.)
+        silently block Direct URL playback. If the speaker is currently
+        on one of these, we send SET MB#50 0 first to release the audio
+        path. Without this, PLAYITEM:DIRECT is silently ignored and the
+        user hears nothing.
+
+        After sending the URL, schedule a metadata refresh so the HA
+        media player shows the new track info promptly.
         """
+        # Sources that own the audio path and silently block PLAYITEM:DIRECT
+        # per observation + LUCI spec §10.35.
+        # 0  = No Source (already free, no preflight needed)
+        # 17 = Direct URL (we're already there, no preflight needed)
+        # All other non-local sources need release first.
+        _BLOCKING_SOURCES = {
+            1,   # AirPlay
+            2,   # DMR
+            3,   # DMP
+            4,   # Spotify Connect
+            7,   # Melon
+            8,   # vTuner
+            9,   # TuneIn
+            11,  # Playlist
+            18,  # QPlay
+            19,  # Bluetooth
+            21,  # Deezer
+            22,  # Tidal
+            23,  # Favourites — confirmed blocking from log 2026-05-20
+            24,  # Google Cast
+            27,  # Roon
+            28,  # Alexa
+            30,  # Airable
+        }
+        current_src = self.state.source_id
+        if current_src in _BLOCKING_SOURCES:
+            _LOGGER.info(
+                "play_url preflight: releasing source %d before "
+                "PLAYITEM:DIRECT (LUCI §10.35 — external sources block)",
+                current_src,
+            )
+            try:
+                await self._send(0x02, MB_SOURCE, "0")  # release audio path
+                # Give firmware a beat to release before requesting new source
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                _LOGGER.debug("Source release preflight failed: %s", e)
+
         await self._send(0x02, MB_BROWSE, f"PLAYITEM:DIRECT:{url}")
         # Store the URL so the media player can display it as a friendly
         # title while metadata is being fetched
@@ -467,29 +509,20 @@ class LitheClient:
     async def async_play_chime(self, chime_number: int) -> None:
         """Trigger an embedded audio cue via MB#80.
 
-        Per LUCI Tech Note v15.0.7 section 9.33 (RxTx_MB#80 Play Audio
-        Cues), the chime protocol is a simple single-request flow:
+        Per LUCI v14.1 spec §6.45 (Tx_MB#80 Play Audio Index):
 
-            HOST → LSx: SET MB#80 "play <Index>"
-            LSx → HOST: SET Response, payload = SUCCESS / FILE_NOT_FOUND / NI
+            Command:  0xAAAA SET 80 NA <"play N">     where N is 1..10
+            Response: 0xAAAA SET 80 success/failure
+                      data field = SUCCESS | NI | FILE_NOT_FOUND
+              - SUCCESS         — valid play accepted, audio cue triggered
+              - NI              — index out of range (No Index, 1..10 only)
+              - FILE_NOT_FOUND  — index valid but no audio file installed
 
-        Spec-defined index range: **1-10** (max 10 audio cues per device per
-        LUCI spec §9.33). The Lithe customer API doc and PRO2 product spec
-        say 1-15, with slots 11-15 enabled by vendor SCK customization on
-        specific firmware builds. We accept 1-15 to match per-product
-        capability matrix (PRODUCT_CHIMES); slots beyond the actual
-        firmware support return NI which we log clearly.
-
-        Per LUCI spec §2.6 / Lithe API doc §2.6:
-          - Playback is immediate
-          - Behaviour is deterministic
-          - Latency is minimal
-
-        No MB#82 handshake exists in the LUCI spec (searched all 240
-        pages — zero references). Earlier integration code implemented
-        an MB#82 AUDIOPATH_OPEN handshake based on private Lithe support
-        guidance, but this firmware (PRO2 CR443GP_3713) does not push
-        MB#82. We now match the spec exactly: single MB#80 SET.
+        That's the complete protocol. Single request, single response on
+        MB#80. The earlier MB#82 AUDIOPATH_OPEN handshake (from vendor
+        private support guidance) is NOT part of the documented spec —
+        we no longer send it proactively and only respond if the speaker
+        spontaneously sends MB#82 AUDIOCUE_START.
 
         Source-blocking caveat (per LUCI spec §10.35 MB#494 Cast Setup):
           "If the device's audio path is assigned to external sources,
@@ -497,15 +530,15 @@ class LitheClient:
            LS9... this notification serves the purpose of changing the
            audio path back to LS9."
 
-        The spec confirms external sources (Spotify, AirPlay, Cast) can
-        silently block audio output. The documented solution is to
-        switch the audio path back to LSx (i.e. SET MB#50 to LSx's
-        source ID, typically 0). We don't auto-do this because it
-        interrupts the user's external playback — instead we surface
-        the issue diagnostically so users can stop the external source
-        themselves.
+        External sources (Spotify, AirPlay, Cast) can silently block
+        chime output. The documented remedy is to switch the source
+        away first (e.g. SET MB#50 to a local source). We don't
+        auto-do this because it'd interrupt user-driven playback.
         """
-        n = max(1, min(15, int(chime_number)))
+        # Per LUCI v14.1 spec §6.45: device supports up to 10 indexes.
+        # Higher values return NI from the speaker — cap here so we
+        # don't bother sending requests that will fail.
+        n = max(1, min(10, int(chime_number)))
         now = asyncio.get_event_loop().time()
         sock_state = "no_writer" if self._writer is None else (
             "closing" if self._writer.is_closing() else "open"
@@ -954,13 +987,31 @@ class LitheClient:
             self._parse_favourites(payload)
 
         elif mbid == MB_CHIME:
-            # Diagnostic: if we recently fired a chime via MB#80, log time-to-ack
+            # Per LUCI v14.1 spec §6.45 Tx_MB#80:
+            # Response data field is SUCCESS | NI | FILE_NOT_FOUND
+            #   SUCCESS         — valid play accepted
+            #   NI              — index out of range (No Index, 1..10 only)
+            #   FILE_NOT_FOUND  — index valid but no audio file present
             r = payload.strip()
+            ru = r.upper()
             if self._last_chime_mbid == MB_CHIME and self._last_chime_time:
                 ack_ms = (asyncio.get_event_loop().time() - self._last_chime_time) * 1000.0
                 _LOGGER.info("CHIME-DIAG MB#80 ack in %.1fms: %r", ack_ms, r)
-            elif r and r.upper() not in ("SUCCESS", "NI"):
-                _LOGGER.debug("Chime MB#80 response: %s", r)
+            if ru == "FILE_NOT_FOUND":
+                _LOGGER.warning(
+                    "Chime slot is empty on speaker firmware (FILE_NOT_FOUND). "
+                    "Per LUCI v14.1 spec MB#80 supports indexes 1..10; this "
+                    "specific slot has no audio file installed."
+                )
+            elif ru == "NI":
+                _LOGGER.warning(
+                    "Chime index out of range (NI). Per LUCI v14.1 spec "
+                    "MB#80 supports indexes 1..10 only."
+                )
+            elif ru == "SUCCESS":
+                _LOGGER.debug("Chime accepted (MB#80 SUCCESS)")
+            elif r:
+                _LOGGER.debug("Chime MB#80 response (unrecognised): %s", r)
 
         elif mbid == MB_AUDIOCUE:
             # Audiocue lifecycle (Lithe firmware extension, MB#82).

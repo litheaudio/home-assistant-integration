@@ -51,6 +51,10 @@ async def async_setup_entry(
     # Diagnostics
     entities.append(LitheRebootButton(coordinator, entry))
     entities.append(LitheFactoryResetButton(coordinator, entry))
+    # Release Source — unsticks the speaker when external source
+    # (Spotify Connect, AirPlay, Cast, Favourites) blocks playback.
+    # Sends SET MB#50 0 to release the audio path.
+    entities.append(LitheReleaseSourceButton(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -109,7 +113,7 @@ class LitheChimeButton(ButtonEntity):
 
 
 class LitheRebootButton(_LitheBaseButton):
-    _attr_name = "Reboot"
+    _attr_name = "Actions — Reboot"
     _attr_icon = "mdi:restart"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = None
@@ -123,7 +127,7 @@ class LitheRebootButton(_LitheBaseButton):
 
 
 class LitheFactoryResetButton(_LitheBaseButton):
-    _attr_name = "Factory Reset"
+    _attr_name = "Actions — Factory Reset"
     _attr_icon = "mdi:lock-reset"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -133,6 +137,37 @@ class LitheFactoryResetButton(_LitheBaseButton):
 
     async def async_press(self) -> None:
         await self._client.async_factory_reset()
+
+
+class LitheReleaseSourceButton(_LitheBaseButton):
+    """Release the speaker's audio path (SET MB#50 0 = No Source).
+
+    Useful when an external source (Spotify Connect, AirPlay, Cast,
+    Favourites, etc.) owns the audio path and silently blocks Direct
+    URL playback per LUCI spec §10.35. Press this to unstick the
+    speaker, then retry your TTS / Radio / play_media action.
+    """
+
+    _attr_name = "Actions — Release Source"
+    _attr_icon = "mdi:eject"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_release_source"
+
+    async def async_press(self) -> None:
+        from .const import MB_SOURCE
+        _LOGGER.info(
+            "Release Source pressed — sending SET MB#50 0 to unblock "
+            "audio path (was source %d)",
+            self._client.state.source_id,
+        )
+        await self._client._send(0x02, MB_SOURCE, "0")  # noqa: SLF001
+        # Confirm source state after release
+        import asyncio
+        await asyncio.sleep(0.3)
+        await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
 
 
 class LitheSaveFavouriteButton(ButtonEntity):
