@@ -53,35 +53,44 @@
     },
     "select": {
       "eq_preset": {
-        "name": "EQ Preset"
+        "name": "Audio — EQ Preset"
       },
       "speaker_output": {
-        "name": "Speaker Output"
+        "name": "Audio — Speaker Output"
       },
       "high_pass_filter": {
-        "name": "High Pass Filter"
+        "name": "Audio — High Pass Filter"
       },
       "speaker_tuning": {
-        "name": "Speaker Tuning"
+        "name": "Audio — Speaker Tuning"
+      },
+      "cast_group": {
+        "name": "Audio — Cast Group"
       }
     },
     "number": {
       "loudness": {
-        "name": "Loudness"
+        "name": "Audio — Loudness"
       },
       "balance": {
-        "name": "Balance"
+        "name": "Audio — Balance"
       }
     },
     "switch": {
       "night_mode": {
-        "name": "Night Mode"
+        "name": "Audio — Night Mode"
       },
       "loudness": {
-        "name": "Loudness"
+        "name": "Audio — Loudness"
       },
       "bluetooth": {
-        "name": "Bluetooth"
+        "name": "Inputs — Bluetooth"
+      },
+      "aux_in": {
+        "name": "Inputs — AUX In"
+      },
+      "spdif_in": {
+        "name": "Inputs — SPDIF In"
       }
     },
     "sensor": {
