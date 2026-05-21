@@ -57,7 +57,7 @@ class _LitheBaseNumber(CoordinatorEntity[LitheAudioCoordinator], NumberEntity):
 class LitheLoudnessNumber(_LitheBaseNumber):
     """Loudness slider for WiFi PRO 2: -10 to +10 dB."""
 
-    _attr_name = "Loudness"
+    _attr_name = "Audio — Loudness"
     _attr_native_min_value = -10
     _attr_native_max_value = 10
     _attr_native_step = 1
@@ -104,7 +104,7 @@ class LitheLoudnessNumber(_LitheBaseNumber):
 class LitheBalanceNumber(_LitheBaseNumber):
     """Balance slider: -6 (full left) to +6 (full right)."""
 
-    _attr_name = "Balance"
+    _attr_name = "Audio — Balance"
     _attr_native_min_value = -6
     _attr_native_max_value = 6
     _attr_native_step = 1

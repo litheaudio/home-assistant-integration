@@ -82,7 +82,7 @@ class LitheNightModeSwitch(_LitheBaseSwitch):
     user toggle (covers wire latency without flipping back).
     """
 
-    _attr_name = "Night Mode"
+    _attr_name = "Audio — Night Mode"
     _attr_icon = "mdi:weather-night"
 
     def __init__(self, coordinator, entry):
@@ -121,7 +121,7 @@ class LitheNightModeSwitch(_LitheBaseSwitch):
 class LitheLoudnessSwitch(_LitheBaseSwitch):
     """Loudness ON/OFF switch (V3, iO1, V2, PRO)."""
 
-    _attr_name = "Loudness"
+    _attr_name = "Audio — Loudness"
     _attr_icon = "mdi:volume-plus"
 
     def __init__(self, coordinator, entry):
@@ -164,7 +164,7 @@ class LitheBluetoothSwitch(_LitheBaseSwitch):
     the UI is responsive even before the speaker pushes MB#210.
     """
 
-    _attr_name = "Bluetooth"
+    _attr_name = "Inputs — Bluetooth"
     _attr_icon = "mdi:bluetooth"
 
     def __init__(self, coordinator, entry):
@@ -286,7 +286,7 @@ class _LithePassthroughSwitch(_LitheBaseSwitch):
 class LitheAuxInSwitch(_LithePassthroughSwitch):
     """AUX In passthrough toggle."""
 
-    _attr_name = "AUX In"
+    _attr_name = "Inputs — AUX In"
     _attr_icon = "mdi:audio-input-rca"
     _SOURCE_ID = 13
 
@@ -298,7 +298,7 @@ class LitheAuxInSwitch(_LithePassthroughSwitch):
 class LitheSpdifInSwitch(_LithePassthroughSwitch):
     """SPDIF In passthrough toggle."""
 
-    _attr_name = "SPDIF In"
+    _attr_name = "Inputs — SPDIF In"
     _attr_icon = "mdi:toslink"
     _SOURCE_ID = 14
 

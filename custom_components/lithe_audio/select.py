@@ -74,7 +74,7 @@ class _LitheBaseSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntity):
 class LitheEqSelect(_LitheBaseSelect):
     """EQ Preset selector."""
 
-    _attr_name = "EQ Preset"
+    _attr_name = "Audio — EQ Preset"
     _attr_options = EQ_PRESETS
     _attr_icon = "mdi:equalizer"
 
@@ -100,7 +100,7 @@ class LitheEqSelect(_LitheBaseSelect):
 class LitheOutputSelect(_LitheBaseSelect):
     """Speaker Output selector."""
 
-    _attr_name = "Speaker Output"
+    _attr_name = "Audio — Speaker Output"
     _attr_options = OUT_OPTIONS
     _attr_icon = "mdi:speaker"
 
@@ -124,7 +124,7 @@ class LitheOutputSelect(_LitheBaseSelect):
 class LitheHighPassSelect(_LitheBaseSelect):
     """High Pass Filter selector — PRO 2 only."""
 
-    _attr_name = "High Pass Filter"
+    _attr_name = "Audio — High Pass Filter"
     _attr_options = HP_OPTIONS
     _attr_icon = "mdi:filter"
 
@@ -151,7 +151,7 @@ class LitheHighPassSelect(_LitheBaseSelect):
 class LitheTuningSelect(_LitheBaseSelect):
     """Speaker Tuning selector — PRO 2 only."""
 
-    _attr_name = "Speaker Tuning"
+    _attr_name = "Audio — Speaker Tuning"
     _attr_options = ["Enclosure 13L", "Open Back"]
     _attr_icon = "mdi:tune"
 
@@ -186,7 +186,7 @@ class LitheCastGroupSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntit
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Cast Group"
+    _attr_name = "Audio — Cast Group"
     _attr_icon = "mdi:speaker-multiple"
 
     NONE_LABEL = "(None — local only)"

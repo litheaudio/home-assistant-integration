@@ -94,7 +94,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
     """Lithe Audio speaker media player entity."""
 
     _attr_has_entity_name = True
-    _attr_name = None  # Use device name
+    # Named "A Player" so it sorts to the top of the device's Controls panel
+    # (HA sorts entities alphabetically by friendly name).
+    _attr_name = "A Player"
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)

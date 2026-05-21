@@ -92,9 +92,9 @@ class LitheChimeButton(ButtonEntity):
         self._client = coordinator.client
         self._entry = entry
         self._slot = slot
-        # "Chimes — N" prefix groups all chime entities together
+        # "Chimes — NN" prefix groups all chime entities together
         # alphabetically in the Controls section.
-        self._attr_name = f"Chimes — Chime {slot:02d}"
+        self._attr_name = f"Chimes — {slot:02d}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_chime_{slot}"
 
     @property
@@ -187,7 +187,7 @@ class LitheSaveFavouriteButton(ButtonEntity):
         self._entry = entry
         self._slot = slot
         # "Favourites — Save N" groups under Favourites section in Controls
-        self._attr_name = f"Favourites — Save to Favourite {slot}"
+        self._attr_name = f"Favourites — Save {slot}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_save_fav_{slot}"
 
     @property
@@ -220,7 +220,7 @@ class LithePlayFavouriteButton(ButtonEntity):
         self._entry = entry
         self._slot = slot
         # "Favourites — Play N" groups under Favourites section in Controls
-        self._attr_name = f"Favourites — Play Favourite {slot}"
+        self._attr_name = f"Favourites — Play {slot}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_play_fav_{slot}"
 
     @property
