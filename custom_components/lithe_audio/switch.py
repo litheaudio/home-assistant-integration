@@ -31,10 +31,8 @@ async def async_setup_entry(
         entities.append(LitheLoudnessSwitch(coordinator, entry))
     if c["bluetooth_switch"]:
         entities.append(LitheBluetoothSwitch(coordinator, entry))
-    if c.get("aux_in_switch"):
-        entities.append(LitheAuxInSwitch(coordinator, entry))
-    if c.get("spdif_in_switch"):
-        entities.append(LitheSpdifInSwitch(coordinator, entry))
+    # Do not expose AUX/SPDIF switches through MB#50. The working C4 driver
+    # treats MB#50 as feedback and does not activate inputs with it.
 
     if entities:
         async_add_entities(entities)

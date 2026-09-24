@@ -661,12 +661,17 @@ def _register_services(hass: HomeAssistant) -> None:
                 source, sorted(SOURCE_NAME_TO_ID.keys()),
             )
             return
-        # Send MB#50 SET <id> per LUCI API
+        # MB#50 is feedback-only in the working C4 driver. Bluetooth has a
+        # dedicated MB#209 command; other sources need source-specific flows.
         async def do_switch(c):
-            await c._send(0x02, 50, str(src_id))  # noqa: SLF001
-            _LOGGER.info(
-                "select_source_type: requested switch to '%s' (source=%d)",
-                source, src_id,
+            if source == "bluetooth":
+                from .const import BT_ON
+                await c.async_bluetooth(BT_ON)
+                return
+            _LOGGER.warning(
+                "select_source_type: '%s' cannot be activated with MB#50; "
+                "use its source-specific playback command",
+                source,
             )
         await _for_each(call, do_switch)
 

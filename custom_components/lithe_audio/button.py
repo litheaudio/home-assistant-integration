@@ -51,11 +51,6 @@ async def async_setup_entry(
     # Diagnostics
     entities.append(LitheRebootButton(coordinator, entry))
     entities.append(LitheFactoryResetButton(coordinator, entry))
-    # Release Source — unsticks the speaker when external source
-    # (Spotify Connect, AirPlay, Cast, Favourites) blocks playback.
-    # Sends SET MB#50 0 to release the audio path.
-    entities.append(LitheReleaseSourceButton(coordinator, entry))
-
     async_add_entities(entities)
 
 

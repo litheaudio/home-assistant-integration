@@ -24,7 +24,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_NAMES,
+    BT_OFF, BT_ON, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_NAMES,
     PRODUCT_SOURCES, SOURCES,
 )
 from .coordinator import LitheAudioCoordinator
@@ -108,31 +108,10 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
         # Build source list from product capability matrix.
         #
-        # We filter to only sources that can be ACTIVATED via MB#50 SET.
-        # Streaming-app sources (Spotify Connect, AirPlay, Cast, etc.)
-        # are passive — they become active only when an external client
-        # device starts streaming to them. Showing them in select_source
-        # produces a non-working dropdown (looks like a bug), so we omit
-        # them. They still appear in `source_name` attribute when active.
-        # (This matches the Sonos integration pattern — Sonos only shows
-        # locally-switchable sources in its source picker.)
-        # Local inputs that show in the source dropdown.
-        # AUX In, SPDIF In, Bluetooth have been MOVED to Browse Media
-        # per user UX request — they appear as top-level browse entries
-        # with icons there. Favourites and Direct URL stay in source.
-        _ACTIVATABLE_SOURCES = {
-            0,   # No Source (releases current)
-            5,   # USB
-            17,  # Direct URL
-            23,  # Favourites
-        }
+        # MB#50 is feedback-only in the working C4 driver. Populated local
+        # favourites are appended dynamically and use real playback commands.
         src_ids = PRODUCT_SOURCES.get(self._product, list(SOURCES.keys()))
-        self._source_list = [
-            SOURCES[s] for s in src_ids
-            if s in SOURCES
-            and s in _ACTIVATABLE_SOURCES
-            and SOURCES[s] != "No Source"
-        ]
+        self._source_list = []
         # Reverse-lookup name → id (still includes AUX/SPDIF/BT so
         # Browse Media can switch to them and source_name still
         # displays them when they activate themselves)
@@ -626,8 +605,6 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
           - "♥ Favourite N: <name>" → plays saved favourite N
         Cast groups are reached via the Group icon now, not this dropdown.
         """
-        import asyncio
-
         # ── Favourite picker ──────────────────────────────────────────
         if source.startswith("♥ Favourite "):
             try:
@@ -656,7 +633,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 _LOGGER.warning("Native favourite play failed: %s", e)
             return
 
-        # ── Local source switch ──────────────────────────────────────
+        # MB#50 reports the source; it does not activate a playback pipeline.
         # Clear any active Cast routing first.
         prev_cast = getattr(self._client.state, "active_cast_group", "")
         if prev_cast:
@@ -674,14 +651,11 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             )
             return
 
-        _LOGGER.info("select_source: switching to %s (id=%d)", source, src_id)
-        await self._client._send(0x02, 50, str(src_id))  # noqa: SLF001
-
-        async def _refresh():
-            await asyncio.sleep(0.8)
-            await self._client._send(0x01, 50, "")
-            await self._client._send(0x01, 51, "")
-        self.hass.async_create_task(_refresh())
+        _LOGGER.warning(
+            "select_source: %s (id=%d) cannot be activated with MB#50; "
+            "use Browse Media or play_media instead",
+            source, src_id,
+        )
 
     async def async_play_media(
         self, media_type: str, media_id: str, **kwargs: Any
@@ -730,22 +704,14 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             if target_id is None:
                 _LOGGER.warning("lithe_toggle: unknown source %r", source_name)
                 return
-            current = self._client.state.source_id
-            from .const import MB_SOURCE
-            if current == target_id:
-                # Already active → turn OFF (release audio path)
-                _LOGGER.info(
-                    "Toggle %s OFF (was active) — SET MB#50 0",
+            if source_name != "Bluetooth":
+                _LOGGER.warning(
+                    "lithe_toggle: %s has no proven activation command",
                     source_name,
                 )
-                await self._client._send(0x02, MB_SOURCE, "0")  # noqa: SLF001
-            else:
-                # Not active → turn ON via select_source
-                _LOGGER.info(
-                    "Toggle %s ON — switching from source %d",
-                    source_name, current,
-                )
-                await self.async_select_source(source_name)
+                return
+            command = BT_OFF if self._client.state.source_id == target_id else BT_ON
+            await self._client.async_bluetooth(command)
             return
 
         # HA-side local favourite — saved URL plays via play_url
@@ -1095,9 +1061,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         #   switch.lithe_audio_<name>_bluetooth
         current_source = self._client.state.source_id
         for label_base, source_name, source_id in (
-            ("🔌 AUX In",     "AUX In",    13),
-            ("💿 SPDIF In",   "SPDIF In",  14),
-            ("🎧 Bluetooth",  "Bluetooth", 19),
+            ("🎧 Bluetooth", "Bluetooth", 19),
         ):
             if source_name not in self._source_id_by_name:
                 continue

@@ -130,6 +130,10 @@ class LitheClient:
         self._buf = b""
         self._read_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        # Match the working Control4 driver: serialize all LUCI writes and
+        # leave 100 ms between packets.
+        self._send_lock = asyncio.Lock()
+        self._last_tx_time: float = 0.0
         self._callbacks: list[Callable] = []
         self._last_rx_time: float = 0.0
         self._last_chime_time: float = 0.0
@@ -205,16 +209,9 @@ class LitheClient:
         except Exception:
             pass
 
-        # Register. Match the Control4 reference driver: send the host's
-        # network address as a plain string for ALL platforms (LS9 + LS10).
-        # We previously used a JSON {"APP_info": {...}} blob for LS10
-        # speakers, but Control4 — which works reliably — uses plain IP
-        # everywhere. The JSON format may put the speaker in a different
-        # session mode that delays chime processing.
-        reg = self.local_ip
-
-        self._writer.write(self._build_packet(0x02, MB_REGISTER, reg))
-        await self._writer.drain()
+        # LS10/TLS expects lowercase app_info JSON. LS9 retains the legacy
+        # plain-IP registration payload.
+        await self._send(0x02, MB_REGISTER, self._registration_payload())
         await asyncio.sleep(0.4)  # speaker needs ~400ms before accepting commands
 
         self.state.connected = True
@@ -245,10 +242,8 @@ class LitheClient:
                 if not self.state.connected or not self._writer or self._writer.is_closing():
                     break
                 try:
-                    # Re-register with plain IP (matches Control4 driver)
-                    self._writer.write(self._build_packet(0x02, MB_REGISTER, self.local_ip))
-                    # Refresh device name (Control4 does this too)
-                    self._writer.write(self._build_packet(0x01, MB_DEVICE_NAME, ""))
+                    await self._send(0x02, MB_REGISTER, self._registration_payload())
+                    await self._send(0x01, MB_DEVICE_NAME, "")
                     _LOGGER.debug("Heartbeat: re-registered with speaker")
                 except Exception as e:
                     _LOGGER.debug("Heartbeat write failed: %s", e)
@@ -365,17 +360,22 @@ class LitheClient:
     # ── Commands ───────────────────────────────────────────────────────────
 
     async def async_set_volume(self, level: int) -> None:
-        await self._send(0x02, MB_VOLUME, str(max(0, min(100, level))))
+        # RID 0x0000 reaches the MCU gain write. RID 0xAAAA may only update
+        # the LS-side state without changing audible volume.
+        await self._send(
+            0x02,
+            MB_VOLUME,
+            str(max(0, min(100, level))),
+            remote_id=0x0000 if self.use_tls else 0xAAAA,
+        )
 
     async def async_mute(self, mute: bool) -> None:
         """Mute / unmute speaker.
 
-        Empirically this firmware accepts SET on MB#63 directly. The spec
-        says MB#63 is Tx_ only and mute should go through MB#40 SET MUTE/
-        UNMUTE — but MB#63 SET works and was the proven path in earlier
-        working versions. Keep what works.
+        The working Control4 driver sends MUTE/UNMUTE through MB#40. MB#63
+        is feedback carrying the resulting mute state.
         """
-        await self._send(0x02, MB_MUTE, MUTE_ON if mute else MUTE_OFF)
+        await self._send(0x02, MB_TRANSPORT, MUTE_ON if mute else MUTE_OFF)
 
     async def async_play(self) -> None:
         await self._send(0x02, MB_TRANSPORT, TRANSPORT_PLAY)
@@ -415,54 +415,13 @@ class LitheClient:
     async def async_play_url(self, url: str) -> None:
         """Push a direct stream URL to the speaker (MB#41 DIRECT).
 
-        Source-release preflight: per LUCI spec §10.35, external sources
-        (Spotify Connect, AirPlay, Cast, Tidal, Deezer, Favourites etc.)
-        silently block Direct URL playback. If the speaker is currently
-        on one of these, we send SET MB#50 0 first to release the audio
-        path. Without this, PLAYITEM:DIRECT is silently ignored and the
-        user hears nothing.
+        Match the working Control4 path exactly: MB#41 SET with
+        PLAYITEM:DIRECT:<url>. MB#50 is source feedback, not a source-switch
+        command, so no synthetic MB#50 SET preflight is sent.
 
         After sending the URL, schedule a metadata refresh so the HA
         media player shows the new track info promptly.
         """
-        # Sources that own the audio path and silently block PLAYITEM:DIRECT
-        # per observation + LUCI spec §10.35.
-        # 0  = No Source (already free, no preflight needed)
-        # 17 = Direct URL (we're already there, no preflight needed)
-        # All other non-local sources need release first.
-        _BLOCKING_SOURCES = {
-            1,   # AirPlay
-            2,   # DMR
-            3,   # DMP
-            4,   # Spotify Connect
-            7,   # Melon
-            8,   # vTuner
-            9,   # TuneIn
-            11,  # Playlist
-            18,  # QPlay
-            19,  # Bluetooth
-            21,  # Deezer
-            22,  # Tidal
-            23,  # Favourites — confirmed blocking from log 2026-05-20
-            24,  # Google Cast
-            27,  # Roon
-            28,  # Alexa
-            30,  # Airable
-        }
-        current_src = self.state.source_id
-        if current_src in _BLOCKING_SOURCES:
-            _LOGGER.info(
-                "play_url preflight: releasing source %d before "
-                "PLAYITEM:DIRECT (LUCI §10.35 — external sources block)",
-                current_src,
-            )
-            try:
-                await self._send(0x02, MB_SOURCE, "0")  # release audio path
-                # Give firmware a beat to release before requesting new source
-                await asyncio.sleep(0.3)
-            except Exception as e:
-                _LOGGER.debug("Source release preflight failed: %s", e)
-
         await self._send(0x02, MB_BROWSE, f"PLAYITEM:DIRECT:{url}")
         # Store the URL so the media player can display it as a friendly
         # title while metadata is being fetched
@@ -518,11 +477,8 @@ class LitheClient:
               - NI              — index out of range (No Index, 1..10 only)
               - FILE_NOT_FOUND  — index valid but no audio file installed
 
-        That's the complete protocol. Single request, single response on
-        MB#80. The earlier MB#82 AUDIOPATH_OPEN handshake (from vendor
-        private support guidance) is NOT part of the documented spec —
-        we no longer send it proactively and only respond if the speaker
-        spontaneously sends MB#82 AUDIOCUE_START.
+        That's the complete host protocol. The working Control4 driver does
+        not send MB#82 AUDIOPATH_OPEN; MB#82 is treated as lifecycle feedback.
 
         Source-blocking caveat (per LUCI spec §10.35 MB#494 Cast Setup):
           "If the device's audio path is assigned to external sources,
@@ -631,8 +587,7 @@ class LitheClient:
             sub_mb, value, len(pkt), hex_preview,
         )
         try:
-            self._writer.write(pkt)
-            await self._writer.drain()
+            await self._write_packet(pkt)
         except Exception as e:
             _LOGGER.warning(
                 "DSP TX sub=0x%02x val=%d write FAILED: %s",
@@ -1026,15 +981,8 @@ class LitheClient:
             #    start, playback success/failure notifications are notified
             #    through MB#82."
             #
-            # Flow:
-            #   1. We send MB#80 SET "play N"
-            #   2. Speaker → us: MB#82 "AUDIOCUE_START"
-            #   3. We → speaker: MB#82 SET "AUDIOPATH_OPEN" (acknowledge that
-            #      the audio path is open — equivalent to an MCU enabling
-            #      its audio DSP/codec for cue playback). For us as a
-            #      software host, this is purely an acknowledgement; we
-            #      don't have hardware to gate.
-            #   4. Speaker plays the cue, then notifies success/failure.
+            # The host sends MB#80. MB#82 reports the internal audio-cue
+            # lifecycle; the firmware/MCU owns physical audio-path control.
             r = payload.strip()
             ru = r.upper()
             if self._last_chime_time:
@@ -1044,15 +992,9 @@ class LitheClient:
                 _LOGGER.info("CHIME-DIAG MB#82 (unsolicited): %r", r)
 
             if ru in ("AUDIOCUE_START", "AUDIO_CUE_START", "START"):
-                # Speaker is requesting we open the audio path. Acknowledge
-                # immediately so playback can proceed.
-                _LOGGER.info(
-                    "MB#82 AUDIOCUE_START received — responding with "
-                    "AUDIOPATH_OPEN to permit cue playback"
-                )
-                asyncio.create_task(
-                    self._send(0x02, MB_AUDIOCUE, "AUDIOPATH_OPEN")
-                )
+                # The working C4 driver treats this as firmware/MCU lifecycle
+                # feedback and sends no external AUDIOPATH_OPEN response.
+                _LOGGER.info("MB#82 AUDIOCUE_START received")
             elif ru in ("NI", "FILE_NOT_FOUND", "FAILURE", "FAIL"):
                 _LOGGER.warning(
                     "Audiocue playback failed: '%s'. Slot may be empty "
@@ -1467,7 +1409,9 @@ class LitheClient:
     # ── Packet builder ─────────────────────────────────────────────────────
 
     @staticmethod
-    def _build_packet(cmd_type: int, mbid: int, payload: str) -> bytes:
+    def _build_packet(
+        cmd_type: int, mbid: int, payload: str, remote_id: int = 0xAAAA
+    ) -> bytes:
         """Build a TX packet matching the LUCI spec.
 
         Per Lithe's official Python example (vendor docs §10.2):
@@ -1488,17 +1432,54 @@ class LitheClient:
         """
         data = payload.encode("utf-8")
         data_len = len(data)
-        header = struct.pack("<HBHBHH", 0xAAAA, cmd_type, mbid, 0, 0x0000, data_len)
+        header = struct.pack(
+            "<HBHBHH", remote_id, cmd_type, mbid, 0, 0x0000, data_len
+        )
         return header + data + b"\x00"
 
-    async def _send(self, cmd_type: int, mbid: int, payload: str) -> None:
+    def _registration_payload(self) -> str:
+        """Return the registration format used by the working C4 driver."""
+        if not self.use_tls:
+            return self.local_ip
+        return json.dumps(
+            {
+                "app_info": {
+                    "id": "control4",
+                    "ip": self.local_ip,
+                    "version": "1.0.0",
+                }
+            },
+            separators=(",", ":"),
+        ) + "\n"
+
+    async def _write_packet(self, packet: bytes) -> None:
+        """Serialize writes and preserve the C4 driver's 100 ms spacing."""
+        if not self._writer or self._writer.is_closing():
+            return
+        async with self._send_lock:
+            loop = asyncio.get_running_loop()
+            delay = 0.1 - (loop.time() - self._last_tx_time)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._writer.write(packet)
+            await self._writer.drain()
+            self._last_tx_time = loop.time()
+
+    async def _send(
+        self,
+        cmd_type: int,
+        mbid: int,
+        payload: str,
+        remote_id: int = 0xAAAA,
+    ) -> None:
         if self._writer and not self._writer.is_closing():
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 op = "GET" if cmd_type == 0x01 else "SET"
                 preview = payload[:80] + ("…" if len(payload) > 80 else "")
                 _LOGGER.debug("TX %s MB#%d (%d bytes): %s", op, mbid, len(payload), preview)
-            self._writer.write(self._build_packet(cmd_type, mbid, payload))
-            await self._writer.drain()
+            await self._write_packet(
+                self._build_packet(cmd_type, mbid, payload, remote_id)
+            )
 
 
 class LitheClientLS9(LitheClient):
@@ -1508,7 +1489,11 @@ class LitheClientLS9(LitheClient):
     """
 
     async def async_transact(
-        self, mbid: int, payload: str, cmd_type: int = 0x02
+        self,
+        mbid: int,
+        payload: str,
+        cmd_type: int = 0x02,
+        remote_id: int = 0xAAAA,
     ) -> list[tuple[int, str]]:
         """Connect, send one command, collect responses, disconnect."""
         responses: list[tuple[int, str]] = []
@@ -1529,7 +1514,7 @@ class LitheClientLS9(LitheClient):
             await asyncio.sleep(0.15)
 
             # Send command
-            writer.write(self._build_packet(cmd_type, mbid, payload))
+            writer.write(self._build_packet(cmd_type, mbid, payload, remote_id))
             await writer.drain()
 
             # Read responses for up to 1.5s
@@ -1574,8 +1559,14 @@ class LitheClientLS9(LitheClient):
             _LOGGER.debug("LS9 transact %s MB#%d: %s", self.host, mbid, e)
         return responses
 
-    async def _send(self, cmd_type: int, mbid: int, payload: str) -> None:
-        await self.async_transact(mbid, payload, cmd_type)
+    async def _send(
+        self,
+        cmd_type: int,
+        mbid: int,
+        payload: str,
+        remote_id: int = 0xAAAA,
+    ) -> None:
+        await self.async_transact(mbid, payload, cmd_type, remote_id)
 
     async def async_connect(self) -> None:
         """LS9: no persistent connection — just mark connected and prime state."""
