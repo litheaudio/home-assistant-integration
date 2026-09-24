@@ -51,3 +51,12 @@ All notable changes to this project will be documented in this file.
 - **Brand assets** bundled with the integration (Home Assistant 2026.3+)
 - **Diagnostics** support with automatic redaction of MAC addresses and
   serial numbers
+# 1.4.2
+
+- Match the working Control4 LUCI transport: lowercase `app_info` JSON
+  registration on LS10/TLS, serialized 100 ms packet spacing, and selectable
+  RemoteID values.
+- Send LS10 volume writes with RemoteID `0x0000` so they reach the MCU gain
+  path, and send mute/unmute through MB#40.
+- Treat MB#50 as source feedback instead of a source-switch command.
+- Keep chimes on the proven MB#80 `play N` path and treat MB#82 as feedback.
