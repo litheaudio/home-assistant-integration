@@ -10,7 +10,7 @@ Local, real-time control of Lithe Audio Wi-Fi speakers — **no cloud required**
 - ⏰ **Alarms** — daily/weekly/monthly with fade-in volume, multi-room targeting
 - 🔊 **Multi-room Groups** — virtual group entities; play across multiple speakers simultaneously
 - 🎙️ **Chime / Tannoy override** — built-in chimes, doorbell ducking, TTS announcements
-- 🎛️ **DSP / EQ** — bass, treble, balance, loudness, night mode, output mode
+- 🎛️ **DSP / EQ** — bass, mid, treble, balance, loudness, night mode, output mode
 - ❤️ **Heart-to-favourite** — one tap saves the currently playing track
 - 📱 **Bluetooth pairing**, source switching, set-name from HA
 

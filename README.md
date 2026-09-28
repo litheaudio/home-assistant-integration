@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.1.70** — Multi-room groups, Prayer Scheduler, alarms, heart-to-favourite, full DSP/EQ, browse media with HA media sources + 17 Adhan + 30 Juz Quran presets.
+**Latest: 1.4.3** — Live-capture-verified EQ, loudness, night mode, balance, and output controls.
 
 ---
 
@@ -16,7 +16,7 @@ Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on po
 | ⏰ **Alarms** | Daily / weekly / monthly with per-day toggles, fade-in volume, multi-room targeting |
 | 🔊 **Multi-room Groups** | Virtual group entities — play across multiple speakers simultaneously |
 | 🎙️ **Chimes & Tannoy** | 10-15 built-in chimes per model, doorbell ducking, TTS announcements |
-| 🎛️ **DSP / EQ** | Bass, treble, balance, loudness, night mode, output mode |
+| 🎛️ **DSP / EQ** | Bass, mid, treble, balance, loudness, night mode, output mode |
 | ❤️ **Favourites 1-9** | Heart button auto-saves currently playing track to next free slot |
 | 🔵 **Bluetooth** | Pair / disconnect / status per speaker |
 | 🔧 **Diagnostics** | Firmware, MAC, RSSI, SSID, network mode, uptime sensors |
@@ -27,7 +27,7 @@ Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on po
 
 | Product | Platform | TLS | Chimes | EQ/DSP | Loudness | Bluetooth |
 |---|---|---|---|---|---|---|
-| WiFi PRO 2 | LS10 | ✅ | 15 | Full | ±10 dB slider | ✅ |
+| WiFi PRO 2 | LS10 | ✅ | 15 | EQ, Output, Balance | On/Off | ✅ |
 | WiFi Speaker V3 | LS10 | ✅ | 6 | EQ, Output, Balance | On/Off | ✅ |
 | iO1 | LS10 | ✅ | 10 | EQ, Output, Balance | On/Off | ✅ |
 | WiFi Speaker V2 | LS9 | — | 0 | EQ, Output, Balance | On/Off | ✅ |

@@ -75,12 +75,12 @@ class SpeakerState:
     # changes made in the Lithe app (2-way sync). Sub-MB IDs verified
     # from app packet capture (dsp-sniffer, 2026-05-17):
     dsp_eq:        int | None = None  # 0x0A: 0=Normal 1=Acoustic 2=Jazz 3=Pop 4=HipHop
-    dsp_treble:    int | None = None  # 0x09: signed
-    dsp_loudness:  int | None = None  # 0x16: signed -10..+10
-    dsp_nightmode: int | None = None  # 0x18: 0=OFF 1=ON
-    dsp_highpass:  int | None = None  # 0x1A: 0=OFF 1=60Hz 2=80Hz 3=100Hz 4=120Hz
-    dsp_tuning:    int | None = None  # 0x1D: 0=Enclosure 13L, 1=Open Back
-    dsp_balance:   int | None = None  # 0x1E: signed -6..+6
+    dsp_bass:      int | None = None  # 0x09 field 0x02: signed -5..+5
+    dsp_mid:       int | None = None  # 0x09 field 0x04: signed -5..+5
+    dsp_treble:    int | None = None  # 0x09 field 0x06: signed -5..+5
+    dsp_loudness:  int | None = None  # 0x0B: 0=OFF 1=ON
+    dsp_nightmode: int | None = None  # 0x0C: 0=OFF 1=ON
+    dsp_balance:   int | None = None  # 0x0E: signed -6..+6
     dsp_output:    int | None = None  # 0x0F: 0=Mono 1=Stereo 2=Left 3=Right
 
     # Player role (per API_NEW page 25): "Free" / "Master" / "Slave"
@@ -551,16 +551,19 @@ class LitheClient:
         """Factory reset via MB#150."""
         await self._send(0x02, MB_FACTORY_RESET, "")
 
-    async def async_dsp_command(self, sub_mb: int, value: int) -> None:
+    async def async_dsp_command(self, sub_mb: int, value: int, field: int = 0x02) -> None:
         """Send a DSP command via MB#112 tunnel (LS10 only).
 
-        Sub-packet shape (6 bytes): 0x00 0x04 [sub_mb hi] [sub_mb lo] 0x02 [value]
+        Sub-packet shape: 00 04 [sub_mb hi] [sub_mb lo] [field] [value].
+        Most controls use field 0x02. EQ bands use 0x02/0x04/0x06.
         """
-        byte_val = value & 0xFF if value >= 0 else (256 + value) & 0xFF
+        # Captured firmware uses sign-magnitude nibbles for DSP controls:
+        # F1=-1, F2=-2, ... F6=-6 (not two's complement FF/FE/.../FA).
+        byte_val = value & 0xFF if value >= 0 else 0xF0 | min(0x0F, abs(value))
         sub = bytes([
             0x00, 0x04,
             (sub_mb >> 8) & 0xFF, sub_mb & 0xFF,
-            0x02,
+            field & 0xFF,
             byte_val,
         ])
         # DataLen counts payload bytes only — terminator is separate
@@ -570,28 +573,28 @@ class LitheClient:
 
         if not self._writer:
             _LOGGER.warning(
-                "DSP TX sub=0x%02x val=%d DROPPED — no writer (not connected)",
-                sub_mb, value,
+                "DSP TX sub=0x%02x field=0x%02x val=%d DROPPED — no writer",
+                sub_mb, field, value,
             )
             return
         if self._writer.is_closing():
             _LOGGER.warning(
-                "DSP TX sub=0x%02x val=%d DROPPED — writer closing",
-                sub_mb, value,
+                "DSP TX sub=0x%02x field=0x%02x val=%d DROPPED — writer closing",
+                sub_mb, field, value,
             )
             return
 
         hex_preview = " ".join(f"{b:02X}" for b in pkt)
         _LOGGER.info(
-            "TX DSP MB#112 sub=0x%02x val=%d (%d bytes): %s",
-            sub_mb, value, len(pkt), hex_preview,
+            "TX DSP MB#112 sub=0x%02x field=0x%02x val=%d (%d bytes): %s",
+            sub_mb, field, value, len(pkt), hex_preview,
         )
         try:
             await self._write_packet(pkt)
         except Exception as e:
             _LOGGER.warning(
-                "DSP TX sub=0x%02x val=%d write FAILED: %s",
-                sub_mb, value, e,
+                "DSP TX sub=0x%02x field=0x%02x val=%d write FAILED: %s",
+                sub_mb, field, value, e,
             )
 
     # ── Callbacks ──────────────────────────────────────────────────────────
@@ -712,10 +715,15 @@ class LitheClient:
 
             status = self._buf[5]
             payload_bytes = self._buf[10:10 + data_len]
-            try:
-                payload = payload_bytes.decode("utf-8", "replace").rstrip("\x00")
-            except Exception:
-                payload = ""
+            if mbid == MB_DSP:
+                # MB#112 is binary. Preserve signed bytes such as F1 (-1);
+                # UTF-8 replacement would destroy them before DSP parsing.
+                payload: str | bytes = payload_bytes
+            else:
+                try:
+                    payload = payload_bytes.decode("utf-8", "replace").rstrip("\x00")
+                except Exception:
+                    payload = ""
 
             # Consume this packet — do NOT skip trailing NUL.
             # The speaker's packet stream is back-to-back; any byte after
@@ -800,7 +808,7 @@ class LitheClient:
         )
         self._buf = b""
 
-    def _handle_push(self, mbid: int, payload: str) -> None:
+    def _handle_push(self, mbid: int, payload: str | bytes) -> None:
         """Handle an incoming message from the speaker.
 
         Note: every RX is already logged in _process_buffer with its
@@ -1017,51 +1025,29 @@ class LitheClient:
             # — 2-way sync.
             try:
                 from .const import (
-                    DSP_EQ, DSP_TREBLE, DSP_LOUDNESS, DSP_NIGHTMODE,
-                    DSP_HIGHPASS, DSP_TUNING, DSP_BALANCE, DSP_OUTPUT,
+                    DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS,
+                    DSP_LOUDNESS, DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT,
+                    DSP_TREBLE_FIELD,
                 )
 
-                # Map sub-MB ID → (SpeakerState attribute, decode function).
-                #
-                # The Lithe firmware uses ASYMMETRIC sub-MB codes AND
-                # sometimes asymmetric value encodings:
-                # - TX (controller → speaker) uses modern codes:
-                #     0x16 (loudness, signed -10..+10)
-                #     0x18 (night mode, 0/1)
-                #     0x1A (highpass, 0..4)
-                #     0x1C (output, 0..3)
-                #     0x1D (tuning, 0/1)
-                #     0x1E (balance, signed -6..+6)
-                # - RX broadcast (speaker → all clients, fired when the
-                #   *app* changes a setting via HOST MCU path) uses
-                #   LEGACY codes with potentially DIFFERENT encodings.
-                #
-                # Sniffer-confirmed mappings (2026-05-18):
-                #   Night Mode  TX 0x18  ⟷ RX 0x0C, 0/1                 ✓ proven
-                #   Loudness    TX 0x16  ⟷ RX 0x34, 0..20 (offset +10)  ✓ proven
-                #
-                # Decode functions take the raw byte and return the
-                # value to store in state.dsp_* (matching the displayed
-                # scale that HA entities use).
                 def _signed_8(b: int) -> int:
-                    return b - 256 if b > 127 else b
+                    if b & 0xF0 == 0xF0:
+                        return -(b & 0x0F)
+                    return b
                 def _unsigned(b: int) -> int:
                     return b
-                def _loudness_unsigned_offset(b: int) -> int:
-                    # Speaker broadcast encoding: wire 0..20 → display -10..+10
-                    return b - 10
 
                 _DSP_MAP: dict[int, tuple[str, callable]] = {
                     DSP_EQ:        ("dsp_eq",        _unsigned),
-                    DSP_TREBLE:    ("dsp_treble",    _signed_8),
-                    DSP_LOUDNESS:  ("dsp_loudness",  _signed_8),  # TX echo (signed)
-                    0x34:          ("dsp_loudness",  _loudness_unsigned_offset),  # RX broadcast 0..20 (sniffer-confirmed)
+                    DSP_LOUDNESS:  ("dsp_loudness",  _unsigned),
                     DSP_NIGHTMODE: ("dsp_nightmode", _unsigned),
-                    0x0C:          ("dsp_nightmode", _unsigned),  # RX broadcast (sniffer-confirmed)
-                    DSP_HIGHPASS:  ("dsp_highpass",  _unsigned),
-                    DSP_TUNING:    ("dsp_tuning",    _unsigned),
                     DSP_BALANCE:   ("dsp_balance",   _signed_8),
                     DSP_OUTPUT:    ("dsp_output",    _unsigned),
+                }
+                _DSP_FIELD_MAP: dict[tuple[int, int], tuple[str, callable]] = {
+                    (DSP_EQ_BANDS, DSP_BASS_FIELD):   ("dsp_bass", _signed_8),
+                    (DSP_EQ_BANDS, DSP_MID_FIELD):    ("dsp_mid", _signed_8),
+                    (DSP_EQ_BANDS, DSP_TREBLE_FIELD): ("dsp_treble", _signed_8),
                 }
 
                 raw = payload.encode("latin-1") if isinstance(payload, str) else payload
@@ -1085,9 +1071,15 @@ class LitheClient:
                     # SET response / GET response — 00 04 <subMB hi> <subMB lo> [status] <value>
                     elif raw[i] == 0x00 and raw[i+1] == 0x04 and i + 6 <= len(raw):
                         sub_mb = raw[i+3]  # low byte; high byte is 0
+                        field = raw[i+4]
                         val_byte = raw[i+5]
-                        parsed.append(f"resp sub=0x{sub_mb:02x}({sub_mb}) val={val_byte}")
-                        if sub_mb in _DSP_MAP:
+                        parsed.append(
+                            f"resp sub=0x{sub_mb:02x} field=0x{field:02x} val={val_byte}"
+                        )
+                        if (sub_mb, field) in _DSP_FIELD_MAP:
+                            attr, decode = _DSP_FIELD_MAP[(sub_mb, field)]
+                            updates.append((attr, decode(val_byte)))
+                        elif sub_mb in _DSP_MAP:
                             attr, decode = _DSP_MAP[sub_mb]
                             updates.append((attr, decode(val_byte)))
                         i += 6
@@ -1537,7 +1529,14 @@ class LitheClientLS9(LitheClient):
                         if len(buf) < total:
                             break
                         r_mbid = struct.unpack_from(">H", buf, 3)[0]
-                        r_payload = buf[10:10 + data_len].decode("utf-8", "replace").rstrip("\x00")
+                        r_payload_bytes = buf[10:10 + data_len]
+                        r_payload: str | bytes
+                        if r_mbid == MB_DSP:
+                            r_payload = r_payload_bytes
+                        else:
+                            r_payload = r_payload_bytes.decode(
+                                "utf-8", "replace"
+                            ).rstrip("\x00")
                         buf = buf[total:]
                         # ALWAYS dispatch — even MB#10 needs _handle_push so
                         # it can send the MB#11=1 grant. Previously this was

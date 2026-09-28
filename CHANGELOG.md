@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.3] — 2026-09-28
+
+### Fixed
+
+- Replaced guessed DSP command IDs with values confirmed by a labelled live
+  LUCI capture from the Lithe app: EQ bands `0x09`, EQ preset `0x0A`,
+  Loudness `0x0B`, Night Mode `0x0C`, Balance `0x0E`, and Output `0x0F`.
+- Added independent Bass, Mid, and Treble controls using field selectors
+  `0x02`, `0x04`, and `0x06`.
+- Removed the unverified High Pass, Speaker Tuning, and numeric Loudness
+  controls. Loudness is now the captured on/off switch.
+
 ## [1.4.1] — 2026-05-21
 
 ### Changed

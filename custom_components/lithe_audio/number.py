@@ -9,7 +9,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, DSP_BALANCE, DSP_LOUDNESS, caps,
+    CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
+    DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ_BANDS, DSP_MID_FIELD,
+    DSP_TREBLE_FIELD, caps,
 )
 from .coordinator import LitheAudioCoordinator
 
@@ -24,10 +26,14 @@ async def async_setup_entry(
     c = caps(product)
 
     entities: list[NumberEntity] = []
+    if c["eq_select"]:
+        entities.extend((
+            LitheEqBandNumber(coordinator, entry, "Bass", "dsp_bass", DSP_BASS_FIELD),
+            LitheEqBandNumber(coordinator, entry, "Mid", "dsp_mid", DSP_MID_FIELD),
+            LitheEqBandNumber(coordinator, entry, "Treble", "dsp_treble", DSP_TREBLE_FIELD),
+        ))
     if c["balance_number"]:
         entities.append(LitheBalanceNumber(coordinator, entry))
-    if c["loudness_number"]:
-        entities.append(LitheLoudnessNumber(coordinator, entry))
 
     if entities:
         async_add_entities(entities)
@@ -54,41 +60,31 @@ class _LitheBaseNumber(CoordinatorEntity[LitheAudioCoordinator], NumberEntity):
         self.async_write_ha_state()
 
 
-class LitheLoudnessNumber(_LitheBaseNumber):
-    """Loudness slider for WiFi PRO 2: -10 to +10 dB."""
+class LitheEqBandNumber(_LitheBaseNumber):
+    """One of the three signed EQ bands carried by DSP sub-MB 0x09."""
 
-    _attr_name = "Audio — Loudness"
-    _attr_native_min_value = -10
-    _attr_native_max_value = 10
+    _attr_native_min_value = -5
+    _attr_native_max_value = 5
     _attr_native_step = 1
     _attr_native_unit_of_measurement = "dB"
     _attr_mode = NumberMode.SLIDER
     _attr_icon = "mdi:equalizer"
 
-    def __init__(self, coordinator, entry):
+    def __init__(self, coordinator, entry, name: str, state_attr: str, field: int):
         super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_loudness"
+        self._attr_name = f"Audio — {name}"
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_{name.lower()}"
+        self._state_attr = state_attr
+        self._field = field
         self._value = 0
         self._optimistic_until: float = 0.0
 
     @property
     def native_value(self) -> float:
-        """Loudness slider value.
-
-        2-way sync (factually verified 2026-05-18):
-          - HA → speaker: TX sub-MB 0x16, signed -10..+10
-          - App → HA: speaker broadcasts as sub-MB 0x34, wire byte 0..20
-            which the parser decodes to -10..+10 and stores in
-            state.dsp_loudness.
-
-        UI strategy: prefer speaker state, but use local _value during
-        a 5-second optimistic window after a HA toggle to avoid
-        flipback if the speaker hasn't echoed yet.
-        """
         import time
         if time.monotonic() < self._optimistic_until:
             return float(self._value)
-        val = getattr(self._client.state, "dsp_loudness", None)
+        val = getattr(self._client.state, self._state_attr, None)
         if val is not None:
             return float(val)
         return float(self._value)
@@ -97,7 +93,7 @@ class LitheLoudnessNumber(_LitheBaseNumber):
         import time
         self._value = int(value)
         self._optimistic_until = time.monotonic() + 5.0
-        await self._client.async_dsp_command(DSP_LOUDNESS, self._value)
+        await self._client.async_dsp_command(DSP_EQ_BANDS, self._value, self._field)
         self.async_write_ha_state()
 
 
@@ -115,14 +111,20 @@ class LitheBalanceNumber(_LitheBaseNumber):
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_balance"
         self._value = 0
+        self._optimistic_until: float = 0.0
 
     @property
     def native_value(self) -> float:
-        # Use local _value — speaker does not push MB#112 confirmation
-        # for sub-MB 0x1E, so reading state.dsp_balance would be stale.
+        import time
+        if time.monotonic() >= self._optimistic_until:
+            value = getattr(self._client.state, "dsp_balance", None)
+            if value is not None:
+                return float(value)
         return float(self._value)
 
     async def async_set_native_value(self, value: float) -> None:
+        import time
         self._value = int(value)
+        self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_BALANCE, self._value)
         self.async_write_ha_state()

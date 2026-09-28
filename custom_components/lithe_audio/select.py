@@ -10,8 +10,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
-    DSP_EQ, DSP_HIGHPASS, DSP_OUTPUT, DSP_TUNING,
-    EQ_PRESETS, HP_OPTIONS, OUT_OPTIONS, caps,
+    DSP_EQ, DSP_OUTPUT, EQ_PRESETS, OUT_OPTIONS, caps,
 )
 from .coordinator import LitheAudioCoordinator
 
@@ -30,10 +29,6 @@ async def async_setup_entry(
         entities.append(LitheEqSelect(coordinator, entry))
     if c["output_select"]:
         entities.append(LitheOutputSelect(coordinator, entry))
-    if c["highpass_select"]:
-        entities.append(LitheHighPassSelect(coordinator, entry))
-    if c["tuning_select"]:
-        entities.append(LitheTuningSelect(coordinator, entry))
 
     # Cast Group selector — every speaker gets one. The dropdown lists
     # Cast groups discovered live from HA's Cast integration. Picking
@@ -82,17 +77,22 @@ class LitheEqSelect(_LitheBaseSelect):
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_eq"
         self._current = "Normal"
+        self._optimistic_until: float = 0.0
 
     @property
     def current_option(self) -> str:
-        # Use local _current — TX is byte-verified identical to the
-        # Lithe app's wire packets (sniffer 2026-05-18). The local
-        # value is authoritative since we just sent it.
+        import time
+        if time.monotonic() >= self._optimistic_until:
+            value = getattr(self._client.state, "dsp_eq", None)
+            if isinstance(value, int) and 0 <= value < len(EQ_PRESETS):
+                return EQ_PRESETS[value]
         return self._current
 
     async def async_select_option(self, option: str) -> None:
+        import time
         idx = EQ_PRESETS.index(option) if option in EQ_PRESETS else 0
         self._current = option
+        self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_EQ, idx)
         self.async_write_ha_state()
 
@@ -108,68 +108,23 @@ class LitheOutputSelect(_LitheBaseSelect):
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_output"
         self._current = "Stereo"
+        self._optimistic_until: float = 0.0
 
     @property
     def current_option(self) -> str:
-        # Use local _current — TX is byte-verified identical to the app.
+        import time
+        if time.monotonic() >= self._optimistic_until:
+            value = getattr(self._client.state, "dsp_output", None)
+            if isinstance(value, int) and 0 <= value < len(OUT_OPTIONS):
+                return OUT_OPTIONS[value]
         return self._current
 
     async def async_select_option(self, option: str) -> None:
+        import time
         idx = OUT_OPTIONS.index(option) if option in OUT_OPTIONS else 0
         self._current = option
+        self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_OUTPUT, idx)
-        self.async_write_ha_state()
-
-
-class LitheHighPassSelect(_LitheBaseSelect):
-    """High Pass Filter selector — PRO 2 only."""
-
-    _attr_name = "Audio — High Pass Filter"
-    _attr_options = HP_OPTIONS
-    _attr_icon = "mdi:filter"
-
-    def __init__(self, coordinator, entry):
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_highpass"
-        self._current = "OFF"
-
-    @property
-    def current_option(self) -> str:
-        # Use local _current — speaker does not push MB#112 confirmation
-        # for sub-MB 0x1A, so reading state.dsp_highpass would be stale.
-        return self._current
-
-    async def async_select_option(self, option: str) -> None:
-        # Sniffed values: 0=OFF, 1=60Hz, 2=80Hz, 3=100Hz, 4=120Hz
-        # HP_OPTIONS order matches exactly so we use index directly.
-        idx = HP_OPTIONS.index(option) if option in HP_OPTIONS else 0
-        self._current = option
-        await self._client.async_dsp_command(DSP_HIGHPASS, idx)
-        self.async_write_ha_state()
-
-
-class LitheTuningSelect(_LitheBaseSelect):
-    """Speaker Tuning selector — PRO 2 only."""
-
-    _attr_name = "Audio — Speaker Tuning"
-    _attr_options = ["Enclosure 13L", "Open Back"]
-    _attr_icon = "mdi:tune"
-
-    def __init__(self, coordinator, entry):
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_tuning"
-        self._current = "Enclosure 13L"
-
-    @property
-    def current_option(self) -> str:
-        # Use local _current — speaker does not push MB#112 confirmation
-        # for sub-MB 0x1D, so reading state.dsp_tuning would be stale.
-        return self._current
-
-    async def async_select_option(self, option: str) -> None:
-        idx = 0 if option == "Enclosure 13L" else 1
-        self._current = option
-        await self._client.async_dsp_command(DSP_TUNING, idx)
         self.async_write_ha_state()
 
 

@@ -58,19 +58,19 @@
       "speaker_output": {
         "name": "Audio — Speaker Output"
       },
-      "high_pass_filter": {
-        "name": "Audio — High Pass Filter"
-      },
-      "speaker_tuning": {
-        "name": "Audio — Speaker Tuning"
-      },
       "cast_group": {
         "name": "Audio — Cast Group"
       }
     },
     "number": {
-      "loudness": {
-        "name": "Audio — Loudness"
+      "bass": {
+        "name": "Audio — Bass"
+      },
+      "mid": {
+        "name": "Audio — Mid"
+      },
+      "treble": {
+        "name": "Audio — Treble"
       },
       "balance": {
         "name": "Audio — Balance"

@@ -295,6 +295,35 @@ set_dsp_eq:
             - Pop
             - Hip-Hop
 
+set_dsp_eq_band:
+  name: Set EQ Band
+  description: Set a captured Bass, Mid, or Treble value on an LS10 speaker.
+  target:
+    entity:
+      domain: media_player
+      integration: lithe_audio
+  fields:
+    band:
+      name: Band
+      description: EQ band to change.
+      required: true
+      selector:
+        select:
+          options:
+            - Bass
+            - Mid
+            - Treble
+    value:
+      name: Value
+      description: Gain from -5 to +5 dB.
+      required: true
+      selector:
+        number:
+          min: -5
+          max: 5
+          step: 1
+          mode: slider
+
 set_dsp_output:
   name: Set Speaker Output Mode
   description: Set mono/stereo/left/right output on an LS10 speaker.
@@ -330,27 +359,6 @@ set_dsp_nightmode:
       selector:
         boolean:
 
-set_dsp_highpass:
-  name: Set High Pass Filter
-  description: Set the high pass filter frequency — WiFi PRO 2 only.
-  target:
-    entity:
-      domain: media_player
-      integration: lithe_audio
-  fields:
-    frequency:
-      name: Frequency
-      description: Filter frequency.
-      required: true
-      selector:
-        select:
-          options:
-            - "OFF"
-            - 60Hz
-            - 80Hz
-            - 100Hz
-            - 120Hz
-
 set_dsp_balance:
   name: Set Balance
   description: Set left/right balance on an LS10 speaker.
@@ -372,22 +380,18 @@ set_dsp_balance:
 
 set_dsp_loudness:
   name: Set Loudness
-  description: "Set loudness. PRO2: -10 to +10 dB. V3/iO1: on/off (1 or 0)."
+  description: Enable or disable Loudness on an LS10 speaker.
   target:
     entity:
       domain: media_player
       integration: lithe_audio
   fields:
-    value:
-      name: Value
-      description: "PRO2: -10..+10 (dB). V3/iO1: 0=off, 1=on."
+    enabled:
+      name: Enabled
+      description: True to enable, False to disable.
       required: true
       selector:
-        number:
-          min: -10
-          max: 10
-          step: 1
-          mode: box
+        boolean:
 
 bluetooth_pair:
   name: Enter Bluetooth Pairing Mode

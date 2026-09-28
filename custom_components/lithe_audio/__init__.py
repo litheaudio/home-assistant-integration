@@ -14,8 +14,9 @@ from .cast_group import async_register_cast_group_service
 from .const import (
     BT_DISC, BT_PAIR, CONF_CERT_PATH, CONF_HOST, CONF_KEY_PATH,
     CONF_PORT, CONF_PRODUCT, CONF_USE_TLS, DATA_COORDINATOR, DOMAIN,
-    DSP_BALANCE, DSP_EQ, DSP_HIGHPASS, DSP_LOUDNESS, DSP_NIGHTMODE, DSP_OUTPUT,
-    EQ_PRESETS, HP_OPTIONS, LS9_PRODUCTS, OUT_OPTIONS, PRODUCT_CHIMES,
+    DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS, DSP_LOUDNESS,
+    DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT, DSP_TREBLE_FIELD,
+    EQ_PRESETS, LS9_PRODUCTS, OUT_OPTIONS, PRODUCT_CHIMES,
 )
 from .coordinator import LitheAudioCoordinator
 from .lithe_client import LitheClient, LitheClientLS9
@@ -340,8 +341,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "snapshot", "restore",
                 "set_sleep_timer", "clear_sleep_timer",
                 "tannoy",
-                "set_dsp_eq", "set_dsp_output", "set_dsp_nightmode",
-                "set_dsp_highpass", "set_dsp_balance", "set_dsp_loudness",
+                "set_dsp_eq", "set_dsp_eq_band", "set_dsp_output",
+                "set_dsp_nightmode", "set_dsp_balance", "set_dsp_loudness",
                 "bluetooth_pair", "bluetooth_disconnect",
                 "reboot", "set_name", "play_group", "set_prayer_schedule",
             ):
@@ -743,17 +744,24 @@ def _register_services(hass: HomeAssistant) -> None:
         val = 1 if call.data.get("enabled") else 0
         await _for_each(call, lambda c: c.async_dsp_command(DSP_NIGHTMODE, val))
 
-    async def svc_set_highpass(call: ServiceCall) -> None:
-        freq = call.data.get("frequency", "OFF")
-        idx = HP_OPTIONS.index(freq) if freq in HP_OPTIONS else 0
-        await _for_each(call, lambda c: c.async_dsp_command(DSP_HIGHPASS, idx))
+    async def svc_set_eq_band(call: ServiceCall) -> None:
+        fields = {
+            "Bass": DSP_BASS_FIELD,
+            "Mid": DSP_MID_FIELD,
+            "Treble": DSP_TREBLE_FIELD,
+        }
+        field = fields.get(call.data.get("band", "Bass"), DSP_BASS_FIELD)
+        val = max(-5, min(5, int(call.data.get("value", 0))))
+        await _for_each(
+            call, lambda c: c.async_dsp_command(DSP_EQ_BANDS, val, field)
+        )
 
     async def svc_set_balance(call: ServiceCall) -> None:
         val = max(-6, min(6, int(call.data.get("balance", 0))))
         await _for_each(call, lambda c: c.async_dsp_command(DSP_BALANCE, val))
 
     async def svc_set_loudness(call: ServiceCall) -> None:
-        val = int(call.data.get("value", 0))
+        val = 1 if call.data.get("enabled") else 0
         await _for_each(call, lambda c: c.async_dsp_command(DSP_LOUDNESS, val))
 
     # ── Bluetooth / system ──────────────────────────────────────────────
@@ -776,9 +784,9 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "select_source_type",  svc_select_source_type)
     hass.services.async_register(DOMAIN, "set_name",         svc_set_name)
     hass.services.async_register(DOMAIN, "set_dsp_eq",       svc_set_eq)
+    hass.services.async_register(DOMAIN, "set_dsp_eq_band",  svc_set_eq_band)
     hass.services.async_register(DOMAIN, "set_dsp_output",   svc_set_output)
     hass.services.async_register(DOMAIN, "set_dsp_nightmode", svc_set_nightmode)
-    hass.services.async_register(DOMAIN, "set_dsp_highpass", svc_set_highpass)
     hass.services.async_register(DOMAIN, "set_dsp_balance",  svc_set_balance)
     hass.services.async_register(DOMAIN, "set_dsp_loudness", svc_set_loudness)
     hass.services.async_register(DOMAIN, "bluetooth_pair",   svc_bt_pair)

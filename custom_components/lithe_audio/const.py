@@ -148,33 +148,22 @@ BT_PAIR    = "ENTPAIR"
 BT_DISC    = "DISCONNECT"
 
 # ── DSP sub-MB IDs (LS10 MB#112 tunnel) ─────────────────────────────────────
-# Confirmed from live capture: PRO2 firmware CR443GP_3713
-# ── DSP sub-MB IDs (tunneled inside MB#112) ─────────────────────────────────
-# Verified against real firmware CR443GP_3713 packet captures.
-# ── DSP sub-MB IDs (MB#112 payload first byte) ──────────────────────────────
-# Confirmed via Lithe app packet capture (dsp-sniffer, 2026-05-17/18):
-#   TX eq        sub-MB=0x000A val=0..4
-#   TX loudness  sub-MB=0x0016 val=-10..+10 (signed byte)
-#   TX nightmode sub-MB=0x0018 val=0/1
-#   TX highpass  sub-MB=0x001A val=0(OFF), 1=60Hz, 2=80Hz, 3=100Hz, 4=120Hz
-#   TX output    sub-MB=0x001C val=0=Mono, 1=Stereo, 2=Left, 3=Right
-#   TX tuning    sub-MB=0x001D val=0/1
-#   TX balance   sub-MB=0x001E val=-6..+6 (signed byte)
-# Previous values (0x0C, 0x0D, 0x0F, 0x29, 0xFF, 0xFE) were guesses from
-# earlier testing and incorrect — replaced with sniffed values.
-DSP_EQ        = 0x0A   # 0=Normal 1=Acoustic 2=Jazz 3=Pop 4=HipHop (sniffed)
-DSP_TREBLE    = 0x09   # Treble cut/boost
-DSP_LOUDNESS  = 0x16   # signed byte -10..+10 (sniffed from app)
-DSP_NIGHTMODE = 0x18   # 0=OFF 1=ON (sniffed from app)
-DSP_HIGHPASS  = 0x1A   # 0=OFF, 1=60Hz, 2=80Hz, 3=100Hz, 4=120Hz (sniffed)
-DSP_OUTPUT    = 0x1C   # 0=Mono, 1=Stereo, 2=Left, 3=Right (sniffed from app)
-DSP_TUNING    = 0x1D   # 0=Enclosure 13L, 1=Open Back (sniffed)
-DSP_BALANCE   = 0x1E   # signed byte -6..+6 (sniffed from app)
+# Confirmed from a labelled Lithe app capture against WiFi v3 firmware
+# 20250512_0201_RC11 on 2026-09-28. The payload is:
+#   00 04 00 <sub-MB> <field> <value>
+# Values are signed 8-bit where noted (F1=-1, F2=-2, and so on).
+DSP_EQ_BANDS  = 0x09   # fields 02=Bass, 04=Mid, 06=Treble; values -5..+5
+DSP_EQ        = 0x0A   # 0=Normal, 1=Acoustic, 2=Jazz, 3=Pop, 4=Hip-Hop
+DSP_LOUDNESS  = 0x0B   # 0=OFF, 1=ON
+DSP_NIGHTMODE = 0x0C   # 0=OFF, 1=ON
+DSP_BALANCE   = 0x0E   # signed -6..+6
+DSP_OUTPUT    = 0x0F   # 0=Mono, 1=Stereo, 2=Left, 3=Right
+
+DSP_BASS_FIELD   = 0x02
+DSP_MID_FIELD    = 0x04
+DSP_TREBLE_FIELD = 0x06
 
 EQ_PRESETS  = ["Normal", "Acoustic", "Jazz", "Pop", "Hip-Hop"]
-# High-pass values per sniffed app traffic:
-#   0=OFF, 1=60Hz, 2=80Hz, 3=100Hz, 4=120Hz
-HP_OPTIONS  = ["OFF", "60Hz", "80Hz", "100Hz", "120Hz"]
 OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]
 
 # ── Per-product chime counts ────────────────────────────────────────────────
@@ -200,11 +189,8 @@ PRODUCT_CHIMES = {
 #   chimes           — number of chime slots (0 = no chime buttons)
 #   eq_select        — EQ preset selector
 #   output_select    — Stereo/Mono/Left/Right selector
-#   highpass_select  — HPF frequency selector (PRO2 only)
-#   tuning_select    — 13L Enclosure / Open Back (PRO2 only)
 #   balance_number   — -6..+6 balance slider
-#   loudness_number  — -10..+10 dB slider (PRO2 only)
-#   loudness_switch  — on/off loudness (V3/iO1/V2/PRO)
+#   loudness_switch  — on/off loudness
 #   nightmode_switch — Night Mode on/off
 #   bluetooth_switch — BT on/off + pair/disconnect (all products)
 PRODUCT_CAPS = {
@@ -212,11 +198,8 @@ PRODUCT_CAPS = {
         "chimes":           15,
         "eq_select":        True,
         "output_select":    True,
-        "highpass_select":  True,
-        "tuning_select":    True,
         "balance_number":   True,
-        "loudness_number":  True,
-        "loudness_switch":  False,
+        "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
         "aux_in_switch":    True,
@@ -226,10 +209,7 @@ PRODUCT_CAPS = {
         "chimes":           6,
         "eq_select":        True,
         "output_select":    True,
-        "highpass_select":  False,
-        "tuning_select":    False,
         "balance_number":   True,
-        "loudness_number":  False,
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
@@ -240,10 +220,7 @@ PRODUCT_CAPS = {
         "chimes":           10,
         "eq_select":        True,
         "output_select":    True,
-        "highpass_select":  False,
-        "tuning_select":    False,
         "balance_number":   True,
-        "loudness_number":  False,
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
@@ -254,10 +231,7 @@ PRODUCT_CAPS = {
         "chimes":           0,
         "eq_select":        True,
         "output_select":    True,
-        "highpass_select":  False,
-        "tuning_select":    False,
         "balance_number":   True,
-        "loudness_number":  False,
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
@@ -268,10 +242,7 @@ PRODUCT_CAPS = {
         "chimes":           6,
         "eq_select":        True,
         "output_select":    True,
-        "highpass_select":  False,
-        "tuning_select":    False,
         "balance_number":   True,
-        "loudness_number":  False,
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
@@ -282,10 +253,7 @@ PRODUCT_CAPS = {
         "chimes":           0,
         "eq_select":        False,
         "output_select":    False,
-        "highpass_select":  False,
-        "tuning_select":    False,
         "balance_number":   False,
-        "loudness_number":  False,
         "loudness_switch":  False,
         "nightmode_switch": False,
         "bluetooth_switch": True,    # BT on; no DSP for now
@@ -301,10 +269,7 @@ def caps(product: str) -> dict:
         "chimes":           0,
         "eq_select":        False,
         "output_select":    False,
-        "highpass_select":  False,
-        "tuning_select":    False,
         "balance_number":   False,
-        "loudness_number":  False,
         "loudness_switch":  False,
         "nightmode_switch": False,
         "bluetooth_switch": False,

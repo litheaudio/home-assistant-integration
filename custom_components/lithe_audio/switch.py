@@ -65,20 +65,7 @@ class _LitheBaseSwitch(CoordinatorEntity[LitheAudioCoordinator], SwitchEntity):
 
 
 class LitheNightModeSwitch(_LitheBaseSwitch):
-    """Night Mode switch.
-
-    2-way sync (factually verified 2026-05-18):
-      - HA → speaker: TX sub-MB 0x18, byte-identical to Lithe app
-        (sniffer-confirmed). Speaker accepts but does NOT push
-        confirmation back to our LUCI session.
-      - App → speaker → HA: when the Lithe app changes Night Mode,
-        the speaker broadcasts the change as legacy sub-MB 0x0C to
-        all connected clients. Our parser maps 0x0C → dsp_nightmode.
-
-    UI strategy: prefer speaker state (so app changes are reflected),
-    but use local _state during a 5-second optimistic window after a
-    user toggle (covers wire latency without flipping back).
-    """
+    """Night Mode switch using captured DSP sub-MB 0x0C."""
 
     _attr_name = "Audio — Night Mode"
     _attr_icon = "mdi:weather-night"
