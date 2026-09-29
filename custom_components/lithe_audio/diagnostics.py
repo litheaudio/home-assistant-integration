@@ -56,6 +56,7 @@ async def async_get_config_entry_diagnostics(
             "network_status":    s.network_status,
             "speaker_status":    s.speaker_status,
             "wifi_rssi_dbm":     s.wifi_rssi_dbm,
+            "wifi_rssi_source":  s.wifi_rssi_source,
             "ssid":              s.ssid,
             # Playback
             "play_state":        s.play_state,
@@ -71,6 +72,9 @@ async def async_get_config_entry_diagnostics(
             "shuffle":           s.shuffle,
             "repeat":            s.repeat,
             "bt_status":         s.bt_status,
+            "bt_enabled":        s.bt_enabled,
+            "artwork_url":       s.artwork_url,
+            "artwork_revision":  s.artwork_revision,
             "title":             s.title,
             "artist":            s.artist,
             "album":             s.album,

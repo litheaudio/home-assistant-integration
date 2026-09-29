@@ -4,11 +4,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import socket
 import ssl
 import struct
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+
+import aiohttp
 
 from .const import (
     DEFAULT_PORT, MB_AUDIOCUE, MB_BLUETOOTH, MB_BROWSE, MB_BT_STATUS, MB_CHIME,
@@ -43,6 +47,7 @@ class SpeakerState:
     network_interface: str = "" # "Wlan" / "Eth"
     network_status: str = ""    # "WLAN" / "Ethernet" / "P2P" / "WAC/SAC/LS-Connect"
     wifi_rssi_dbm: int = 0      # RSSI in dBm (negative number, e.g. -55)
+    wifi_rssi_source: str = ""
     ssid: str = ""              # Connected SSID (from NV item)
     speaker_status: str = ""    # "Standby" / "Connected" / "Active" etc
 
@@ -59,6 +64,7 @@ class SpeakerState:
     artist: str = ""
     album: str = ""
     artwork_url: str = ""
+    artwork_revision: int = 0
     duration_ms: int = 0
     is_live: bool = False  # True for radio/AirPlay streams (no SEEK)
     shuffle: bool = False
@@ -76,6 +82,7 @@ class SpeakerState:
 
     # Bluetooth
     bt_status: str = ""
+    bt_enabled: bool | None = None
 
     # DSP state — populated from MB#112 push packets so HA reflects
     # changes made in the Lithe app (2-way sync). Sub-MB IDs verified
@@ -136,6 +143,7 @@ class LitheClient:
         self._buf = b""
         self._read_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._artwork_refresh_task: Optional[asyncio.Task] = None
         # Match the working Control4 driver: serialize all LUCI writes and
         # leave 100 ms between packets.
         self._send_lock = asyncio.Lock()
@@ -267,6 +275,8 @@ class LitheClient:
             self._read_task.cancel()
         if getattr(self, "_heartbeat_task", None) and not self._heartbeat_task.done():
             self._heartbeat_task.cancel()
+        if self._artwork_refresh_task and not self._artwork_refresh_task.done():
+            self._artwork_refresh_task.cancel()
         if self._writer:
             try:
                 self._writer.close()
@@ -295,7 +305,6 @@ class LitheClient:
                    MB_FIRMWARE,         # 5   Firmware Version
                    MB_INTERFACE_IP,     # 123 Interface IP
                    MB_NETWORK_STATUS,   # 124 Network Status
-                   MB_RSSI,             # 151 RSSI
                    MB_VOLUME,           # 64  Volume
                    MB_MUTE,             # 63  Mute (Tx_ but responds)
                    MB_SOURCE,           # 50  Current Source (Tx_ but responds)
@@ -305,6 +314,15 @@ class LitheClient:
                    MB_TIMEZONE,         # 573 TimeZone
                    MB_BT_STATUS):       # 210 BT Status (Tx_ but responds)
             await self._send(0x01, mb, "")
+            await asyncio.sleep(0.05)
+
+        # The TechNote specifies RID 0xAAAA for MB#151, while current Lithe
+        # app traffic commonly uses RID 0x0000. Some LS10 firmware only
+        # answers one route, so issue the same documented GET through both.
+        await self._send(0x01, MB_RSSI, "", remote_id=0xAAAA)
+        await asyncio.sleep(0.05)
+        if self.use_tls:
+            await self._send(0x01, MB_RSSI, "", remote_id=0x0000)
             await asyncio.sleep(0.05)
 
         # MB#91 NETWORK INFO requires SET MACADDR payload (per spec §9.35)
@@ -317,6 +335,9 @@ class LitheClient:
 
         # NV read for SSID via MB#208 — Lithe's published NV-read protocol
         await self.async_read_nv("ssid")
+
+        # The HTTP page is the confirmed source of Bluetooth service state.
+        await self._refresh_bluetooth_http_state()
 
     async def async_read_nv(self, item: str) -> None:
         """Read an NV item via MB#208 SET READ_<item>.
@@ -534,7 +555,42 @@ class LitheClient:
 
     async def async_bluetooth(self, command: str) -> None:
         """BT command: ON / OFF / ENTPAIR / DISCONNECT."""
+        if command in ("ON", "OFF"):
+            enabled = command == "ON"
+            url = f"http://{self.host}/goform/SetBluetoothmode"
+            value = "Bluetooth_ON" if enabled else "Bluetooth_OFF"
+            timeout = aiohttp.ClientTimeout(total=5)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, data={"Bluetooth": value}) as response:
+                    body = await response.text()
+                    if response.status >= 400:
+                        raise RuntimeError(
+                            f"Bluetooth HTTP control failed ({response.status}): "
+                            f"{body[:120]}"
+                        )
+            self.state.bt_enabled = enabled
+            self.state.bt_status = value
+            self._notify()
+            return
+
+        # Pairing and disconnect remain LUCI MB#209 operations; the HTTP
+        # endpoint only defines service ON/OFF.
         await self._send(0x02, MB_BLUETOOTH, command)
+
+    async def _refresh_bluetooth_http_state(self) -> None:
+        """Read the Bluetooth service flag exposed by the device web page."""
+        try:
+            timeout = aiohttp.ClientTimeout(total=2)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(f"http://{self.host}/") as response:
+                    if response.status != 200:
+                        return
+                    body = await response.text()
+            match = re.search(r"getbtvalue\s*=\s*['\"]([01])['\"]", body)
+            if match:
+                self.state.bt_enabled = match.group(1) == "1"
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            _LOGGER.debug("Bluetooth HTTP state unavailable for %s", self.host)
 
     async def async_reboot(self) -> None:
         """Request speaker reboot.
@@ -769,7 +825,7 @@ class LitheClient:
                     remote_id, payload[:80],
                 )
 
-            self._handle_push(mbid, payload)
+            self._handle_push(mbid, payload, remote_id)
 
     def _resync_buffer(self) -> None:
         """Scan forward in self._buf for the next plausible packet header.
@@ -817,7 +873,9 @@ class LitheClient:
         )
         self._buf = b""
 
-    def _handle_push(self, mbid: int, payload: str | bytes) -> None:
+    def _handle_push(
+        self, mbid: int, payload: str | bytes, remote_id: int = 0
+    ) -> None:
         """Handle an incoming message from the speaker.
 
         Note: every RX is already logged in _process_buffer with its
@@ -1119,6 +1177,16 @@ class LitheClient:
 
         elif mbid == MB_BT_STATUS:
             self.state.bt_status = payload.strip()
+            bt = self.state.bt_status.upper()
+            if "OFF" in bt or bt.endswith(":0"):
+                self.state.bt_enabled = False
+            elif (
+                "ON" in bt
+                or "READY" in bt
+                or "CONNECT" in bt
+                or bt.endswith(":1")
+            ):
+                self.state.bt_enabled = True
 
         elif mbid == MB_TIMEZONE:
             self.state.timezone = payload.strip()
@@ -1149,21 +1217,14 @@ class LitheClient:
                     self.state.speaker_status = "Standby"
 
         elif mbid == MB_RSSI:
-            # MB#151 — payload is RSSI in dBm as a string (e.g. "-55" or "-55,-60" for dual antenna)
+            # MB#151 is normally "-55" or "-55,-60", but some builds wrap
+            # it as "RSSI:-55". Extract all plausible dBm values.
             p = payload.strip()
-            if "," in p:
-                # Multiple antennas — take the strongest (least negative)
-                try:
-                    vals = [int(v.strip()) for v in p.split(",") if v.strip()]
-                    if vals:
-                        self.state.wifi_rssi_dbm = max(vals)
-                except ValueError:
-                    pass
-            else:
-                try:
-                    self.state.wifi_rssi_dbm = int(p)
-                except ValueError:
-                    pass
+            vals = [int(v) for v in re.findall(r"-?\d+", p)]
+            vals = [v for v in vals if -127 <= v < 0]
+            if vals:
+                self.state.wifi_rssi_dbm = max(vals)
+                self.state.wifi_rssi_source = f"MB#151 RID 0x{remote_id:04X}"
 
         elif mbid == MB_DEVICE_INFO:
             # MB#208 is dual-purpose: device info JSON OR NV-read response.
@@ -1218,6 +1279,8 @@ class LitheClient:
                     return str(v)
             return ""
 
+        old_track = (self.state.title, self.state.artist, self.state.album)
+
         self.state.title  = _first(
             "TrackName", "trackname", "track_name",
             "Title", "title", "track", "Track", "TrackTitle", "track_title",
@@ -1240,6 +1303,9 @@ class LitheClient:
         if not self.state.title and self.state.artist:
             self.state.title = self.state.artist
             self.state.artist = ""
+        track_changed = old_track != (
+            self.state.title, self.state.artist, self.state.album
+        )
 
         # ── Shuffle / Repeat state (MB#42 Window CONTENTS) ────────────────
         # Lithe firmware exposes:
@@ -1267,11 +1333,31 @@ class LitheClient:
         )
         # Some firmwares return a relative path — only accept if it looks like a URL
         if art and (art.startswith("http://") or art.startswith("https://")):
+            self._cancel_artwork_refresh()
             self.state.artwork_url = art
         elif art:
-            # Relative path — try to construct a URL using the speaker IP
-            self.state.artwork_url = f"http://{self.host}{art}" if art.startswith("/") else f"http://{self.host}/{art}"
+            # The working Control4 driver special-cases coverart.jpg because
+            # firmware rewrites that file for each track and may take several
+            # seconds to finish. Give every track a new URL and refresh it at
+            # 3s and 6s so HA cannot keep serving the first cached image.
+            base_url = (
+                f"http://{self.host}{art}"
+                if art.startswith("/")
+                else f"http://{self.host}/{art}"
+            )
+            if art.lower().split("?", 1)[0].endswith("coverart.jpg"):
+                if track_changed or not self.state.artwork_url:
+                    self.state.artwork_revision += 1
+                self.state.artwork_url = (
+                    f"{base_url}?v={self.state.artwork_revision}"
+                )
+                if track_changed:
+                    self._schedule_artwork_refresh(base_url)
+            else:
+                self._cancel_artwork_refresh()
+                self.state.artwork_url = base_url
         else:
+            self._cancel_artwork_refresh()
             self.state.artwork_url = ""
 
         # Duration — try numerous keys, accept ms or seconds
@@ -1291,6 +1377,30 @@ class LitheClient:
 
         # Live streams report no duration
         self.state.is_live = (self.state.duration_ms == 0)
+
+    def _cancel_artwork_refresh(self) -> None:
+        """Cancel delayed refreshes for a previous local cover image."""
+        if self._artwork_refresh_task and not self._artwork_refresh_task.done():
+            self._artwork_refresh_task.cancel()
+        self._artwork_refresh_task = None
+
+    def _schedule_artwork_refresh(self, base_url: str) -> None:
+        """Refresh firmware-generated coverart.jpg after 3 and 6 seconds."""
+        self._cancel_artwork_refresh()
+
+        async def _refresh() -> None:
+            try:
+                for _ in range(2):
+                    await asyncio.sleep(3)
+                    self.state.artwork_revision += 1
+                    self.state.artwork_url = (
+                        f"{base_url}?v={self.state.artwork_revision}"
+                    )
+                    self._notify()
+            except asyncio.CancelledError:
+                pass
+
+        self._artwork_refresh_task = asyncio.create_task(_refresh())
 
     def _parse_device_info(self, payload: str) -> None:
         """Parse MB#208 device info.

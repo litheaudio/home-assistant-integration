@@ -173,6 +173,8 @@ class LitheBluetoothSwitch(_LitheBaseSwitch):
             return self._optimistic_state
 
         st = self._client.state
+        if st.bt_enabled is not None:
+            return st.bt_enabled
         # Active BT source means BT is on
         if st.source_id == 19:
             return True

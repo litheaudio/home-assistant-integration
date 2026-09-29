@@ -1,8 +1,10 @@
 """Lithe Audio media player entity."""
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
@@ -311,6 +313,24 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # folder still handles the integration-level icon in the Devices
         # & Services screen automatically (HA 2026.3+ local brands).
         return self._client.state.artwork_url or "/lithe_audio_assets/icon.png"
+
+    @property
+    def media_image_hash(self) -> str | None:
+        """Change the HA image cache key whenever track metadata changes."""
+        s = self._client.state
+        identity = "\0".join((
+            self.media_image_url or "", s.title, s.artist, s.album,
+            str(s.artwork_revision),
+        ))
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+
+    @property
+    def media_image_remotely_accessible(self) -> bool:
+        """Let clients fetch public artwork directly, but proxy speaker URLs."""
+        url = self._client.state.artwork_url
+        if not url:
+            return True
+        return urlparse(url).hostname != self._client.host
 
     @property
     def media_duration(self) -> int | None:

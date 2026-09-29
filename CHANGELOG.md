@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.6] — 2026-09-29
+
+### Fixed
+
+- Refresh track artwork using an explicit metadata-derived image hash. For
+  firmware-generated `coverart.jpg`, use a per-track cache key and repeat the
+  refresh after 3 and 6 seconds, matching the working Control4 driver.
+- Use the confirmed `/goform/SetBluetoothmode` HTTP handler for Bluetooth
+  service ON/OFF and mirror its web-page state. Pair/disconnect remain LUCI
+  MB#209 operations.
+- Query documented RSSI MB#151 through both observed RemoteIDs on LS10 and
+  accept plain, dual-antenna, or labelled dBm responses. Diagnostics now show
+  the responding route.
+
 ## [1.4.5] — 2026-09-29
 
 ### Fixed
