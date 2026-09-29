@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.7] — 2026-09-29
+
+### Fixed
+
+- Pass Home Assistant repeat enums by value and accept legacy enum strings, so
+  `REPEAT:ALL` and `REPEAT:ONE` are no longer silently converted to OFF.
+- Update shuffle/repeat state immediately and fetch MB#42 shortly afterwards
+  to confirm the speaker state.
+- Remember the pre-mute level and reapply it via MCU RemoteID `0x0000` after
+  `UNMUTE`, fixing LS10 builds that leave the audible gain closed or at zero.
+- Request track metadata at 0.15, 0.75, and 1.5 seconds after next/previous or
+  an MB#49 rollover, reducing album-art delay at track boundaries.
+
 ## [1.4.6] — 2026-09-29
 
 ### Fixed

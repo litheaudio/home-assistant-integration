@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.6** — Refreshing album artwork, confirmed HTTP Bluetooth power control, dual-route RSSI diagnostics, smooth track position, and MCU/DSP controls.
+**Latest: 1.4.7** — Working repeat/shuffle state, reliable unmute volume restoration, faster track artwork, Bluetooth/RSSI diagnostics, smooth position, and MCU/DSP controls.
 
 ---
 

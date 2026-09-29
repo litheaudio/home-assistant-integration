@@ -473,7 +473,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
     async def async_set_repeat(self, repeat: RepeatMode) -> None:
         """Set repeat mode (off / all / one)."""
-        await self._client.async_set_repeat(str(repeat))
+        await self._client.async_set_repeat(repeat)
 
     # ── Multi-room via Cast groups (4th icon: GROUPING) ───────────────
     #

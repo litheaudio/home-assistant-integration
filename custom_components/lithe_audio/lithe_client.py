@@ -144,6 +144,8 @@ class LitheClient:
         self._read_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._artwork_refresh_task: Optional[asyncio.Task] = None
+        self._metadata_refresh_task: Optional[asyncio.Task] = None
+        self._volume_before_mute: int | None = None
         # Match the working Control4 driver: serialize all LUCI writes and
         # leave 100 ms between packets.
         self._send_lock = asyncio.Lock()
@@ -277,6 +279,8 @@ class LitheClient:
             self._heartbeat_task.cancel()
         if self._artwork_refresh_task and not self._artwork_refresh_task.done():
             self._artwork_refresh_task.cancel()
+        if self._metadata_refresh_task and not self._metadata_refresh_task.done():
+            self._metadata_refresh_task.cancel()
         if self._writer:
             try:
                 self._writer.close()
@@ -402,7 +406,27 @@ class LitheClient:
         The working Control4 driver sends MUTE/UNMUTE through MB#40. MB#63
         is feedback carrying the resulting mute state.
         """
-        await self._send(0x02, MB_TRANSPORT, MUTE_ON if mute else MUTE_OFF)
+        if mute:
+            if self.state.volume > 0:
+                self._volume_before_mute = self.state.volume
+            await self._send(0x02, MB_TRANSPORT, MUTE_ON)
+            self.state.muted = True
+            self._notify()
+            return
+
+        await self._send(0x02, MB_TRANSPORT, MUTE_OFF)
+        # Some LS10/MCU builds clear the audible gain while muting but do not
+        # restore it on UNMUTE. Reapply the pre-mute level through RID 0x0000,
+        # the same path required for audible volume writes.
+        restore_volume = self._volume_before_mute
+        if restore_volume is None and self.state.volume > 0:
+            restore_volume = self.state.volume
+        if restore_volume is not None:
+            await asyncio.sleep(0.1)
+            await self.async_set_volume(restore_volume)
+        self.state.muted = False
+        self._volume_before_mute = None
+        self._notify()
 
     async def async_play(self) -> None:
         await self._send(0x02, MB_TRANSPORT, TRANSPORT_PLAY)
@@ -418,9 +442,11 @@ class LitheClient:
 
     async def async_next_track(self) -> None:
         await self._send(0x02, MB_TRANSPORT, TRANSPORT_NEXT)
+        self._schedule_metadata_refresh()
 
     async def async_prev_track(self) -> None:
         await self._send(0x02, MB_TRANSPORT, TRANSPORT_PREV)
+        self._schedule_metadata_refresh()
 
     async def async_seek(self, position_ms: int) -> None:
         await self._send(0x02, MB_TRANSPORT, f"SEEK:{int(position_ms)}")
@@ -428,16 +454,46 @@ class LitheClient:
     async def async_set_shuffle(self, on: bool) -> None:
         """Toggle shuffle on/off via MB#40."""
         await self._send(0x02, MB_TRANSPORT, "SHUFFLE:ON" if on else "SHUFFLE:OFF")
+        self.state.shuffle = bool(on)
+        self._notify()
+        self._schedule_metadata_refresh(delays=(0.25, 1.0))
 
-    async def async_set_repeat(self, mode: str) -> None:
+    async def async_set_repeat(self, mode: object) -> None:
         """Set repeat mode via MB#40.
 
         mode: 'off' | 'all' | 'one'
         Per LUCI Tech Note: REPEAT:OFF, REPEAT:ALL, REPEAT:ONE.
         """
-        m = (mode or "off").lower()
+        raw_mode = getattr(mode, "value", mode) or "off"
+        # Accept both modern StrEnum values ("all") and older enum string
+        # representations ("RepeatMode.ALL").
+        m = str(raw_mode).rsplit(".", 1)[-1].lower()
         cmd = {"off": "REPEAT:OFF", "all": "REPEAT:ALL", "one": "REPEAT:ONE"}.get(m, "REPEAT:OFF")
         await self._send(0x02, MB_TRANSPORT, cmd)
+        self.state.repeat = m if m in ("off", "all", "one") else "off"
+        self._notify()
+        self._schedule_metadata_refresh(delays=(0.25, 1.0))
+
+    def _schedule_metadata_refresh(
+        self, delays: tuple[float, ...] = (0.15, 0.75, 1.5)
+    ) -> None:
+        """Fetch changing track metadata before the normal MB#42 cadence."""
+        if self._metadata_refresh_task and not self._metadata_refresh_task.done():
+            self._metadata_refresh_task.cancel()
+
+        async def _refresh() -> None:
+            try:
+                elapsed = 0.0
+                for target in delays:
+                    await asyncio.sleep(max(0.0, target - elapsed))
+                    elapsed = target
+                    await self._send(0x01, MB_NOW_PLAYING, "")
+            except asyncio.CancelledError:
+                pass
+            except Exception as err:
+                _LOGGER.debug("Metadata refresh failed: %s", err)
+
+        self._metadata_refresh_task = asyncio.create_task(_refresh())
 
     async def async_play_url(self, url: str) -> None:
         """Push a direct stream URL to the speaker (MB#41 DIRECT).
@@ -977,6 +1033,7 @@ class LitheClient:
                 pass
             else:
                 import time as _time
+                old_pos = self.state.position_ms
                 # If position is moving but we don't know what's playing, fire
                 # a fast metadata refresh. Spotify Connect / AirPlay starts
                 # pushing MB#49 immediately but MB#42/50/51 don't always push
@@ -989,6 +1046,15 @@ class LitheClient:
                         "Position became active with no metadata — fetching now-playing"
                     )
                     asyncio.create_task(self._fetch_now_playing_burst())
+                # A rollback to the beginning normally marks a new track.
+                # Fetch MB#42 immediately instead of waiting for its delayed
+                # periodic push, which otherwise leaves old artwork visible.
+                elif (
+                    new_pos < 10000
+                    and old_pos > 15000
+                    and new_pos + 5000 < old_pos
+                ):
+                    self._schedule_metadata_refresh()
                 self.state.position_ms = new_pos
                 self.state.position_updated_at = _time.time()
 
