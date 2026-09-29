@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.5] — 2026-09-29
+
+### Fixed
+
+- Preserve MB#49 millisecond precision in Home Assistant's `media_position`
+  instead of flooring each push to a whole second. This prevents the playback
+  clock repeatedly advancing and jumping backwards.
+- Add raw position, fractional seconds, update timestamp, and packet age to
+  integration diagnostics.
+
 ## [1.4.4] — 2026-09-29
 
 ### Fixed

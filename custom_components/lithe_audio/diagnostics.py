@@ -1,6 +1,8 @@
 """Diagnostics support for Lithe Audio."""
 from __future__ import annotations
 
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -29,6 +31,15 @@ async def async_get_config_entry_diagnostics(
     fav_count = 0
     if coord and coord.client:
         s = coord.client.state
+        position_updated_at_utc = None
+        position_age_ms = None
+        if s.position_updated_at:
+            position_updated_at_utc = datetime.fromtimestamp(
+                s.position_updated_at, tz=timezone.utc
+            ).isoformat()
+            position_age_ms = max(
+                0, round((time.time() - s.position_updated_at) * 1000)
+            )
         state_snapshot = {
             "connected":         s.connected,
             "name":              s.name,
@@ -52,6 +63,10 @@ async def async_get_config_entry_diagnostics(
             "source_name":       s.source_name,
             "volume":            s.volume,
             "muted":             s.muted,
+            "position_ms":       s.position_ms,
+            "position_seconds":  s.position_seconds,
+            "position_updated_at_utc": position_updated_at_utc,
+            "position_age_ms":   position_age_ms,
             "is_live":           s.is_live,
             "shuffle":           s.shuffle,
             "repeat":            s.repeat,

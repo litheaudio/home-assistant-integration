@@ -52,7 +52,7 @@ class SpeakerState:
     volume: int = 50
     muted: bool = False
     position_ms: int = 0
-    position_updated_at: float = 0.0   # asyncio loop time when MB#49 last seen
+    position_updated_at: float = 0.0   # Unix time when MB#49 was last seen
 
     # Now playing
     title: str = ""
@@ -68,6 +68,11 @@ class SpeakerState:
     # while waiting for the speaker to push fresh MB#42 metadata after
     # a source switch to Direct URL.
     last_played_url: str = ""
+
+    @property
+    def position_seconds(self) -> float:
+        """Return the exact MB#49 position converted from milliseconds."""
+        return self.position_ms / 1000.0
 
     # Bluetooth
     bt_status: str = ""

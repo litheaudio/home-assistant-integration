@@ -318,9 +318,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         return d // 1000 if d else None
 
     @property
-    def media_position(self) -> int | None:
+    def media_position(self) -> float | None:
+        """Return position without discarding MB#49 millisecond precision.
+
+        Home Assistant extrapolates this value from
+        ``media_position_updated_at`` while playback is active. Flooring each
+        speaker push to a whole second repeatedly moved that clock backwards.
+        """
         p = self._client.state.position_ms
-        return p // 1000 if p else None
+        return self._client.state.position_seconds if p else None
 
     @property
     def media_position_updated_at(self):
