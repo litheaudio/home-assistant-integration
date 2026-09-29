@@ -20,6 +20,7 @@ from .const import (
     MUTE_OFF, MUTE_ON, NETWORK_STATUS, PLAY_STATES, SOURCES, TRANSPORT_NEXT,
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
+    DSP_REMOTE_ID,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,9 +76,9 @@ class SpeakerState:
     # changes made in the Lithe app (2-way sync). Sub-MB IDs verified
     # from app packet capture (dsp-sniffer, 2026-05-17):
     dsp_eq:        int | None = None  # 0x0A: 0=Normal 1=Acoustic 2=Jazz 3=Pop 4=HipHop
-    dsp_bass:      int | None = None  # 0x09 field 0x02: signed -5..+5
+    dsp_bass:      int | None = None  # 0x09 field 0x06: signed -5..+5
     dsp_mid:       int | None = None  # 0x09 field 0x04: signed -5..+5
-    dsp_treble:    int | None = None  # 0x09 field 0x06: signed -5..+5
+    dsp_treble:    int | None = None  # 0x09 field 0x02: signed -5..+5
     dsp_loudness:  int | None = None  # 0x0B: 0=OFF 1=ON
     dsp_nightmode: int | None = None  # 0x0C: 0=OFF 1=ON
     dsp_balance:   int | None = None  # 0x0E: signed -6..+6
@@ -555,7 +556,8 @@ class LitheClient:
         """Send a DSP command via MB#112 tunnel (LS10 only).
 
         Sub-packet shape: 00 04 [sub_mb hi] [sub_mb lo] [field] [value].
-        Most controls use field 0x02. EQ bands use 0x02/0x04/0x06.
+        RemoteID 0x0000 is mandatory: 0xAAAA returns SUCCESS but bypasses
+        the MCU/DSP, producing no audible change.
         """
         # Captured firmware uses sign-magnitude nibbles for DSP controls:
         # F1=-1, F2=-2, ... F6=-6 (not two's complement FF/FE/.../FA).
@@ -568,7 +570,9 @@ class LitheClient:
         ])
         # DataLen counts payload bytes only — terminator is separate
         data_len = len(sub)
-        header = struct.pack("<HBHBHH", 0xAAAA, 0x02, MB_DSP, 0, 0x0000, data_len)
+        header = struct.pack(
+            "<HBHBHH", DSP_REMOTE_ID, 0x02, MB_DSP, 0, 0x0000, data_len
+        )
         pkt = header + sub + b"\x00"  # terminator per vendor §10.2
 
         if not self._writer:

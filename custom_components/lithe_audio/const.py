@@ -148,20 +148,21 @@ BT_PAIR    = "ENTPAIR"
 BT_DISC    = "DISCONNECT"
 
 # ── DSP sub-MB IDs (LS10 MB#112 tunnel) ─────────────────────────────────────
-# Confirmed from a labelled Lithe app capture against WiFi v3 firmware
-# 20250512_0201_RC11 on 2026-09-28. The payload is:
+# Confirmed from labelled Lithe app captures and live audible testing against
+# WiFi v3 firmware 20250512_0201_RC11 on 2026-09-28/29. The payload is:
 #   00 04 00 <sub-MB> <field> <value>
 # Values are signed 8-bit where noted (F1=-1, F2=-2, and so on).
-DSP_EQ_BANDS  = 0x09   # fields 02=Bass, 04=Mid, 06=Treble; values -5..+5
+DSP_REMOTE_ID = 0x0000 # Required to reach the MCU/DSP; 0xAAAA only ACKs
+DSP_EQ_BANDS  = 0x09   # fields 06=Bass, 04=Mid, 02=Treble; values -5..+5
 DSP_EQ        = 0x0A   # 0=Normal, 1=Acoustic, 2=Jazz, 3=Pop, 4=Hip-Hop
 DSP_LOUDNESS  = 0x0B   # 0=OFF, 1=ON
 DSP_NIGHTMODE = 0x0C   # 0=OFF, 1=ON
 DSP_BALANCE   = 0x0E   # signed -6..+6
 DSP_OUTPUT    = 0x0F   # 0=Mono, 1=Stereo, 2=Left, 3=Right
 
-DSP_BASS_FIELD   = 0x02
+DSP_BASS_FIELD   = 0x06
 DSP_MID_FIELD    = 0x04
-DSP_TREBLE_FIELD = 0x06
+DSP_TREBLE_FIELD = 0x02
 
 EQ_PRESETS  = ["Normal", "Acoustic", "Jazz", "Pop", "Hip-Hop"]
 OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]

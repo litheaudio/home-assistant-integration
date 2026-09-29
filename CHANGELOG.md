@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.4] — 2026-09-29
+
+### Fixed
+
+- Send MB#112 DSP writes with RemoteID `0x0000`. Firmware acknowledges
+  `0xAAAA` with `SUCCESS` but does not apply that path to the MCU/DSP.
+- Corrected the captured EQ band selectors: Bass is field `0x06`, Mid is
+  `0x04`, and Treble is `0x02`.
+- Retained sign-magnitude encoding for negative values (`F1=-1` through
+  `F6=-6`) and two-way MB#112 app broadcast parsing.
+
 ## [1.4.3] — 2026-09-28
 
 ### Fixed
