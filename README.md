@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.15** — Apple TV apps appear in Browse Media, and Google Cast speaker groups appear alongside Lithe speakers in the Join picker.
+**Latest: 1.4.16** — Repository-level Lithe branding lets HACS display the integration icon while preserving local Home Assistant brand assets.
 
 ---
 

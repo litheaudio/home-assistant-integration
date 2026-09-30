@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.16] — 2026-09-30
+
+### Fixed
+
+- Add repository-level `brand/` icon and logo assets for the HACS repository
+  dashboard, including light, dark, and high-resolution variants.
+- Retain the same assets under `custom_components/lithe_audio/brand/` for
+  Home Assistant's local brands API on Home Assistant 2026.3 and later.
+
 ## [1.4.15] — 2026-09-30
 
 ### Added
