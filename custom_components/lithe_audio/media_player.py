@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
+    BrowseError,
     BrowseMedia,
     DOMAIN as MEDIA_PLAYER_DOMAIN,
     MediaClass,
@@ -34,6 +35,7 @@ from .const import (
 from .coordinator import LitheAudioCoordinator
 from .spotify_bridge import (
     SPOTIFY_CONTENT_PREFIX,
+    SPOTIFY_LIBRARY_ITEMS,
     choose_spotify_source,
     decode_spotify_content,
     encode_spotify_content,
@@ -1036,20 +1038,37 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             spotify_entity_id, spotify_content_id = decode_spotify_content(
                 media_content_id
             )
+            # Do not delegate the synthetic root. Spotify's root browse
+            # contract differs across HA releases and has returned both
+            # "Media not found" and an unhelpful unknown error. These stable
+            # library categories are the same IDs used by the official
+            # integration; only real child requests are delegated below.
+            if spotify_content_id is None:
+                return self._build_spotify_root(spotify_entity_id)
+
             spotify_entity = self._get_media_player_entity(spotify_entity_id)
             if spotify_entity is None:
-                raise RuntimeError(
+                raise BrowseError(
                     f"Spotify entity {spotify_entity_id} is not loaded"
                 )
-            # Spotify's browser recognizes its root only as (None, None).
-            # Our synthetic Lithe folder has type "spotify", so do not pass
-            # that wrapper type into the official integration for root browse.
             spotify_content_type, spotify_content_id = spotify_browse_request(
                 media_content_type, spotify_content_id
             )
-            result = await spotify_entity.async_browse_media(
-                spotify_content_type, spotify_content_id
-            )
+            try:
+                result = await spotify_entity.async_browse_media(
+                    spotify_content_type, spotify_content_id
+                )
+            except Exception as err:
+                _LOGGER.exception(
+                    "Spotify browse failed for type=%r id=%r entity=%s",
+                    spotify_content_type,
+                    spotify_content_id,
+                    spotify_entity_id,
+                )
+                raise BrowseError(
+                    "Spotify browse failed for "
+                    f"{spotify_content_type} / {spotify_content_id}: {err}"
+                ) from err
             return self._wrap_spotify_browse(result, spotify_entity_id)
 
         # Direct URL folder — expand it to see Adhan/Quran/custom presets
@@ -1253,6 +1272,34 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         if component is None or not hasattr(component, "get_entity"):
             return None
         return component.get_entity(entity_id)
+
+    def _build_spotify_root(self, spotify_entity_id: str) -> BrowseMedia:
+        """Build a version-independent Spotify library root."""
+        spotify_state = self.hass.states.get(spotify_entity_id)
+        spotify_name = spotify_state.name if spotify_state else spotify_entity_id
+        children = [
+            BrowseMedia(
+                title=title,
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=encode_spotify_content(
+                    spotify_entity_id, content_id
+                ),
+                media_content_type=f"spotify://{content_id}",
+                can_play=False,
+                can_expand=True,
+            )
+            for title, content_id in SPOTIFY_LIBRARY_ITEMS
+        ]
+        return BrowseMedia(
+            title=f"Spotify - {spotify_name}",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=encode_spotify_content(spotify_entity_id, None),
+            media_content_type="spotify",
+            can_play=False,
+            can_expand=True,
+            children=children,
+            children_media_class=MediaClass.DIRECTORY,
+        )
 
     def _wrap_spotify_browse(
         self, item: BrowseMedia, spotify_entity_id: str

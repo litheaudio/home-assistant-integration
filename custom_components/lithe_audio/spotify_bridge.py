@@ -8,6 +8,16 @@ from collections.abc import Iterable
 
 
 SPOTIFY_CONTENT_PREFIX = "lithe_spotify://"
+SPOTIFY_LIBRARY_ITEMS = (
+    ("Playlists", "current_user_playlists"),
+    ("Artists", "current_user_followed_artists"),
+    ("Albums", "current_user_saved_albums"),
+    ("Liked songs", "current_user_saved_tracks"),
+    ("Podcasts", "current_user_saved_shows"),
+    ("Recently played", "current_user_recently_played"),
+    ("Top Artists", "current_user_top_artists"),
+    ("Top Tracks", "current_user_top_tracks"),
+)
 
 
 def encode_spotify_content(entity_id: str, content_id: str | None) -> str:

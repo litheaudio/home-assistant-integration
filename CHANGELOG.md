@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.10] — 2026-09-30
+
+### Fixed
+
+- Build the Spotify library root inside the Lithe integration instead of
+  delegating an empty root request whose behavior varies between Home
+  Assistant Spotify integration versions.
+- Delegate only concrete Spotify category, album, playlist, artist, show, and
+  track requests to the official Spotify entity.
+- Log delegated browse exceptions with their media type, content ID, and
+  Spotify entity, and return a useful Home Assistant browse error.
+
 ## [1.4.9] — 2026-09-30
 
 ### Fixed
