@@ -41,6 +41,7 @@ from .spotify_bridge import (
     encode_spotify_content,
     spotify_account_content_id,
     spotify_browse_request,
+    spotify_playback_content_id,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -1309,6 +1310,17 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         self, item: BrowseMedia, spotify_entity_id: str
     ) -> BrowseMedia:
         """Route every returned Spotify browse item back through Lithe."""
+        spotify_media_type = str(item.media_content_type or "").removeprefix(
+            "spotify://"
+        )
+        if spotify_media_type in {"artist", "playlist"}:
+            # spotifyaio currently fails while expanding these objects because
+            # Spotify's response no longer matches its generated model. They
+            # remain valid playable Spotify contexts, so avoid the broken
+            # drill-down while preserving useful one-click playback.
+            item.can_expand = False
+            item.can_play = True
+            item.children = None
         item.media_content_id = encode_spotify_content(
             spotify_entity_id, item.media_content_id
         )
@@ -1336,6 +1348,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         **kwargs: Any,
     ) -> None:
         """Transfer Spotify to this speaker and play a library item."""
+        spotify_content_id = spotify_playback_content_id(spotify_content_id)
         target = self._spotify_target(spotify_entity_id)
         if target is None:
             state = self.hass.states.get(spotify_entity_id)

@@ -5,6 +5,7 @@ import base64
 import json
 import re
 from collections.abc import Iterable
+from urllib.parse import unquote, urlparse
 
 
 SPOTIFY_CONTENT_PREFIX = "lithe_spotify://"
@@ -68,6 +69,16 @@ def spotify_account_content_id(config_entry_id: str, content_id: str) -> str:
     if content_id.startswith("spotify://"):
         return content_id
     return f"spotify://{config_entry_id}/{content_id}"
+
+
+def spotify_playback_content_id(content_id: str) -> str:
+    """Remove HA's account scope from a Spotify browse item for playback."""
+    if not content_id.startswith("spotify://"):
+        return content_id
+
+    parsed = urlparse(content_id)
+    scoped_content_id = unquote(parsed.path.lstrip("/"))
+    return scoped_content_id or content_id
 
 
 def choose_spotify_source(

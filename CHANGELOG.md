@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.13] — 2026-09-30
+
+### Fixed
+
+- Work around the upstream `spotifyaio` artist-albums and playlist-tracks
+  parsing failures by exposing artist and playlist results as playable Spotify
+  contexts instead of broken expandable folders.
+- Remove Home Assistant's account scope from delegated browse IDs before
+  playback, producing the native `spotify:artist:...` and
+  `spotify:playlist:...` URIs expected by the official Spotify player.
+
 ## [1.4.12] — 2026-09-30
 
 ### Fixed
