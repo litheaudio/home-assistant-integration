@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.11] — 2026-09-30
+
+### Fixed
+
+- Resolve the official Spotify entity through Home Assistant's typed media
+  player `DATA_COMPONENT` key. Looking up `hass.data["media_player"]` could
+  return no component even though `media_player.spotify` was loaded and its
+  state was visible.
+- Keep the legacy string-key lookup as a fallback for older Home Assistant
+  releases.
+
 ## [1.4.10] — 2026-09-30
 
 ### Fixed

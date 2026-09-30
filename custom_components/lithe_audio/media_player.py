@@ -21,6 +21,9 @@ from homeassistant.components.media_player import (
 from homeassistant.components.media_player.browse_media import (
     async_process_play_media_url,
 )
+from homeassistant.components.media_player.const import (
+    DATA_COMPONENT as MEDIA_PLAYER_DATA_COMPONENT,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
@@ -1268,7 +1271,13 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
     def _get_media_player_entity(self, entity_id: str) -> Any | None:
         """Get a loaded media player entity from HA's EntityComponent."""
-        component = self.hass.data.get(MEDIA_PLAYER_DOMAIN)
+        # Modern HA stores EntityComponent under a typed HassKey. Looking it
+        # up with the literal domain can return None even while the entity is
+        # registered and visible in the state machine.
+        component = self.hass.data.get(MEDIA_PLAYER_DATA_COMPONENT)
+        if component is None:
+            # Compatibility with older HA releases that used the plain domain.
+            component = self.hass.data.get(MEDIA_PLAYER_DOMAIN)
         if component is None or not hasattr(component, "get_entity"):
             return None
         return component.get_entity(entity_id)
