@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
     BrowseMedia,
+    DOMAIN as MEDIA_PLAYER_DOMAIN,
     MediaClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
@@ -23,6 +24,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -30,6 +32,12 @@ from .const import (
     PRODUCT_SOURCES, SOURCES,
 )
 from .coordinator import LitheAudioCoordinator
+from .spotify_bridge import (
+    SPOTIFY_CONTENT_PREFIX,
+    choose_spotify_source,
+    decode_spotify_content,
+    encode_spotify_content,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -705,6 +713,25 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         sounds in Home Assistant and works with the built-in voice
         assistant announcement UI, dashboard buttons, automations, etc.
         """
+        # Spotify library item delegated to HA's official Spotify entity.
+        # That entity owns OAuth, library browsing, and Spotify Connect;
+        # Lithe remains responsible for local speaker state and controls.
+        if media_id.startswith(SPOTIFY_CONTENT_PREFIX):
+            try:
+                spotify_entity_id, spotify_content_id = decode_spotify_content(media_id)
+            except ValueError as err:
+                _LOGGER.warning("Invalid Spotify browse item: %s", err)
+                return
+            if spotify_content_id is None:
+                return
+            await self._async_play_spotify(
+                spotify_entity_id,
+                media_type,
+                spotify_content_id,
+                **kwargs,
+            )
+            return
+
         # Favourite by content_id (no announce flow — favourites resume
         # the speaker's own playback engine)
         if media_id.startswith(_FAV_PREFIX):
@@ -1003,6 +1030,21 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
           ├── 🔊 Text-to-speech   (from HA media_source)
           └── …other HA sources
         """
+        # Delegate wrapped Spotify folders to HA's official Spotify entity.
+        if media_content_id and media_content_id.startswith(SPOTIFY_CONTENT_PREFIX):
+            spotify_entity_id, spotify_content_id = decode_spotify_content(
+                media_content_id
+            )
+            spotify_entity = self._get_media_player_entity(spotify_entity_id)
+            if spotify_entity is None:
+                raise RuntimeError(
+                    f"Spotify entity {spotify_entity_id} is not loaded"
+                )
+            result = await spotify_entity.async_browse_media(
+                media_content_type, spotify_content_id
+            )
+            return self._wrap_spotify_browse(result, spotify_entity_id)
+
         # Direct URL folder — expand it to see Adhan/Quran/custom presets
         if media_content_id == "lithe_direct_url":
             return self._build_direct_url_folder()
@@ -1105,7 +1147,29 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 can_expand=False,
             ))
 
-        # 4) HA media sources (Radio Browser, My Media, TTS, etc.)
+        # 4) Spotify accounts. Each folder delegates browsing and playback
+        # to HA's official Spotify integration, including Spotify Connect.
+        for spotify_entity_id in self._spotify_entity_ids():
+            spotify_state = self.hass.states.get(spotify_entity_id)
+            spotify_name = (
+                spotify_state.name if spotify_state else spotify_entity_id
+            )
+            children.append(BrowseMedia(
+                title=f"Spotify - {spotify_name}",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=encode_spotify_content(
+                    spotify_entity_id, None
+                ),
+                media_content_type="spotify",
+                can_play=False,
+                can_expand=True,
+                thumbnail=(
+                    spotify_state.attributes.get("entity_picture")
+                    if spotify_state else None
+                ),
+            ))
+
+        # 5) HA media sources (Radio Browser, My Media, TTS, etc.)
         # Filter out non-audio sources (Image, Image upload, AI generated
         # images, Camera) per user request — these aren't useful on an
         # audio-only speaker.
@@ -1163,6 +1227,120 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             children=children,
             children_media_class=MediaClass.MUSIC,
         )
+
+    def _spotify_entity_ids(self) -> list[str]:
+        """Return enabled, loaded official Spotify media players."""
+        registry = er.async_get(self.hass)
+        return sorted(
+            entry.entity_id
+            for entry in registry.entities.values()
+            if entry.domain == MEDIA_PLAYER_DOMAIN
+            and entry.platform == "spotify"
+            and entry.disabled_by is None
+            and self.hass.states.get(entry.entity_id) is not None
+        )
+
+    def _get_media_player_entity(self, entity_id: str) -> Any | None:
+        """Get a loaded media player entity from HA's EntityComponent."""
+        component = self.hass.data.get(MEDIA_PLAYER_DOMAIN)
+        if component is None or not hasattr(component, "get_entity"):
+            return None
+        return component.get_entity(entity_id)
+
+    def _wrap_spotify_browse(
+        self, item: BrowseMedia, spotify_entity_id: str
+    ) -> BrowseMedia:
+        """Route every returned Spotify browse item back through Lithe."""
+        item.media_content_id = encode_spotify_content(
+            spotify_entity_id, item.media_content_id
+        )
+        if item.children:
+            for child in item.children:
+                self._wrap_spotify_browse(child, spotify_entity_id)
+        return item
+
+    def _spotify_target(self, spotify_entity_id: str) -> str | None:
+        """Match this Lithe speaker to the Spotify entity's source list."""
+        state = self.hass.states.get(spotify_entity_id)
+        sources = state.attributes.get("source_list", []) if state else []
+        entry_title = self._entry.title.rsplit(" (", 1)[0]
+        candidates = [
+            self._client.state.name or "",
+            entry_title,
+        ]
+        return choose_spotify_source(sources, candidates)
+
+    async def _async_play_spotify(
+        self,
+        spotify_entity_id: str,
+        media_type: str,
+        spotify_content_id: str,
+        **kwargs: Any,
+    ) -> None:
+        """Transfer Spotify to this speaker and play a library item."""
+        target = self._spotify_target(spotify_entity_id)
+        if target is None:
+            state = self.hass.states.get(spotify_entity_id)
+            available = state.attributes.get("source_list", []) if state else []
+            message = (
+                "Spotify could not find a Spotify Connect target matching "
+                f"this Lithe speaker. Available targets: {available or 'none'}. "
+                "Open Spotify once, select the Lithe speaker, then retry."
+            )
+            _LOGGER.warning(message)
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": f"Lithe Audio - {self.name}",
+                    "message": message,
+                    "notification_id":
+                        f"lithe_spotify_{self._entry.entry_id}",
+                },
+                blocking=False,
+            )
+            return
+
+        try:
+            await self.hass.services.async_call(
+                MEDIA_PLAYER_DOMAIN,
+                "select_source",
+                {"entity_id": spotify_entity_id, "source": target},
+                blocking=True,
+                context=self._context,
+            )
+            service_data: dict[str, Any] = {
+                "entity_id": spotify_entity_id,
+                "media_content_type": media_type or MediaType.MUSIC,
+                "media_content_id": spotify_content_id,
+            }
+            if kwargs.get("enqueue") is not None:
+                service_data["enqueue"] = kwargs["enqueue"]
+            await self.hass.services.async_call(
+                MEDIA_PLAYER_DOMAIN,
+                "play_media",
+                service_data,
+                blocking=True,
+                context=self._context,
+            )
+            _LOGGER.info(
+                "Spotify playback delegated to %s on target %s: %s",
+                spotify_entity_id, target, spotify_content_id,
+            )
+            self._client._schedule_metadata_refresh(delays=(0.5, 1.5, 3.0))
+        except Exception as err:
+            _LOGGER.error("Spotify playback failed: %s", err)
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": f"Lithe Audio - {self.name}",
+                    "message": f"Spotify playback failed: {err}",
+                    "notification_id":
+                        f"lithe_spotify_{self._entry.entry_id}",
+                },
+                blocking=False,
+            )
 
     def _build_direct_url_folder(self) -> BrowseMedia:
         """Build the 'Direct URL' sub-folder with Adhan + Quran presets.

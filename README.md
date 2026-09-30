@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.7** — Working repeat/shuffle state, reliable unmute volume restoration, faster track artwork, Bluetooth/RSSI diagnostics, smooth position, and MCU/DSP controls.
+**Latest: 1.4.8** — Spotify library browsing and Spotify Connect playback through Home Assistant's official Spotify integration, plus the 1.4.7 control and artwork fixes.
 
 ---
 
@@ -11,6 +11,7 @@ Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on po
 | | |
 |---|---|
 | 🎵 **Media playback** | Play/pause, volume, next/prev, shuffle, repeat, position tracking |
+| 🟢 **Spotify** | Browse an official HA Spotify account and transfer playback to the selected Lithe speaker |
 | 📻 **Browse media** | Favourites + Adhan + Quran + BBC + HA media sources (Radio Browser, TTS, local files) |
 | 🕋 **Prayer Scheduler** | Daily Adhan at calculated prayer times for your city — 6 prayers including Sunrise & Sunset |
 | ⏰ **Alarms** | Daily / weekly / monthly with per-day toggles, fade-in volume, multi-room targeting |
@@ -55,6 +56,22 @@ Copy `custom_components/lithe_audio/` into your HA `config/custom_components/` a
 
 After installing, your Lithe speakers appear in **Settings → Devices & Services → Lithe Audio**.
 
+### Spotify
+
+1. Add Home Assistant's official **Spotify** integration and sign in with a
+   Spotify Premium account.
+2. Make the Lithe speaker visible in Spotify Connect. If it is not listed yet,
+   open Spotify once and select that speaker.
+3. Open the Lithe media player, choose **Browse media**, then open the
+   **Spotify** account folder.
+4. Selecting an album, playlist, episode, or track transfers the Spotify
+   session to the matching Lithe speaker and starts playback.
+
+Spotify credentials remain entirely in the official Spotify integration. The
+Lithe integration only delegates browse and playback actions to its media
+player entity. The Spotify Connect device name should match the Lithe speaker
+name; ambiguous names are rejected to avoid playing in the wrong room.
+
 Click **Configure** (gear icon) for:
 
 ```
@@ -93,9 +110,11 @@ Click **Configure** (gear icon) for:
 
 ---
 
-## Local-only
+## Network access
 
-100% local LUCI protocol. No cloud. Network access: outbound TCP/7777 per speaker, optional `api.aladhan.com` for prayer times, audio URLs you choose.
+Core speaker control uses the local LUCI protocol on TCP/7777. Optional cloud
+access is used only by features you enable: Home Assistant's Spotify
+integration, `api.aladhan.com` prayer times, and audio stream URLs you choose.
 
 ---
 

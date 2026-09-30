@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.8] — 2026-09-30
+
+### Added
+
+- Show every loaded official Home Assistant Spotify account as a folder in
+  the Lithe media player's Browse Media tree.
+- Delegate Spotify library browsing and playback to the official Spotify
+  entity, preserving its OAuth and Premium account handling.
+- Match the current Lithe speaker to the Spotify entity's Connect source list,
+  transfer playback to it, and reject ambiguous device-name matches.
+- Notify the user when the Lithe speaker is not currently visible as a Spotify
+  Connect target instead of silently accepting a failed playback request.
+
 ## [1.4.7] — 2026-09-29
 
 ### Fixed
