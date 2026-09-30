@@ -21,9 +21,6 @@ from homeassistant.components.media_player import (
 from homeassistant.components.media_player.browse_media import (
     async_process_play_media_url,
 )
-from homeassistant.components.media_player.const import (
-    DATA_COMPONENT as MEDIA_PLAYER_DATA_COMPONENT,
-)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
@@ -42,6 +39,7 @@ from .spotify_bridge import (
     choose_spotify_source,
     decode_spotify_content,
     encode_spotify_content,
+    spotify_account_content_id,
     spotify_browse_request,
 )
 
@@ -1049,17 +1047,27 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             if spotify_content_id is None:
                 return self._build_spotify_root(spotify_entity_id)
 
-            spotify_entity = self._get_media_player_entity(spotify_entity_id)
-            if spotify_entity is None:
+            registry_entry = er.async_get(self.hass).async_get(
+                spotify_entity_id
+            )
+            if registry_entry is None or not registry_entry.config_entry_id:
                 raise BrowseError(
-                    f"Spotify entity {spotify_entity_id} is not loaded"
+                    f"Spotify account for {spotify_entity_id} is not loaded"
                 )
             spotify_content_type, spotify_content_id = spotify_browse_request(
                 media_content_type, spotify_content_id
             )
+            spotify_content_id = spotify_account_content_id(
+                registry_entry.config_entry_id, spotify_content_id
+            )
             try:
-                result = await spotify_entity.async_browse_media(
-                    spotify_content_type, spotify_content_id
+                # Import at call time so Spotify remains optional and a
+                # Spotify API change can never stop Lithe from loading.
+                from homeassistant.components.spotify.browse_media import (
+                    async_browse_media as async_browse_spotify,
+                )
+                result = await async_browse_spotify(
+                    self.hass, spotify_content_type, spotify_content_id
                 )
             except Exception as err:
                 _LOGGER.exception(
@@ -1268,19 +1276,6 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             and entry.disabled_by is None
             and self.hass.states.get(entry.entity_id) is not None
         )
-
-    def _get_media_player_entity(self, entity_id: str) -> Any | None:
-        """Get a loaded media player entity from HA's EntityComponent."""
-        # Modern HA stores EntityComponent under a typed HassKey. Looking it
-        # up with the literal domain can return None even while the entity is
-        # registered and visible in the state machine.
-        component = self.hass.data.get(MEDIA_PLAYER_DATA_COMPONENT)
-        if component is None:
-            # Compatibility with older HA releases that used the plain domain.
-            component = self.hass.data.get(MEDIA_PLAYER_DOMAIN)
-        if component is None or not hasattr(component, "get_entity"):
-            return None
-        return component.get_entity(entity_id)
 
     def _build_spotify_root(self, spotify_entity_id: str) -> BrowseMedia:
         """Build a version-independent Spotify library root."""

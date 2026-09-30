@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.12] — 2026-09-30
+
+### Fixed
+
+- Remove the version-sensitive media-player `DATA_COMPONENT` import added in
+  1.4.11, which could prevent the entire Lithe integration from loading.
+- Browse Spotify through its official account-scoped browse helper using the
+  Spotify entity registry entry's config-entry ID. This no longer depends on
+  retrieving another integration's live entity object.
+- Keep Spotify imports inside the browse action so missing or incompatible
+  optional Spotify code cannot break normal Lithe setup.
+
 ## [1.4.11] — 2026-09-30
 
 ### Fixed

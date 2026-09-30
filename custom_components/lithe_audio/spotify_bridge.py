@@ -63,6 +63,13 @@ def spotify_browse_request(
     return content_type, content_id
 
 
+def spotify_account_content_id(config_entry_id: str, content_id: str) -> str:
+    """Build the account-scoped URL expected by Spotify's browse helper."""
+    if content_id.startswith("spotify://"):
+        return content_id
+    return f"spotify://{config_entry_id}/{content_id}"
+
+
 def choose_spotify_source(
     sources: Iterable[str], candidates: Iterable[str]
 ) -> str | None:
