@@ -1,6 +1,7 @@
 """Lithe Audio media player entity."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from typing import Any
@@ -29,10 +30,15 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    BT_OFF, BT_ON, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_NAMES,
-    PRODUCT_SOURCES, SOURCES,
+    BT_OFF, BT_ON, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, MB_SOURCE,
+    PRODUCT_NAMES, PRODUCT_SOURCES, SOURCES,
 )
 from .coordinator import LitheAudioCoordinator
+from .apple_tv_bridge import (
+    APPLE_TV_CONTENT_PREFIX,
+    decode_apple_tv_content,
+    encode_apple_tv_content,
+)
 from .spotify_bridge import (
     SPOTIFY_CONTENT_PREFIX,
     SPOTIFY_LIBRARY_ITEMS,
@@ -73,6 +79,7 @@ async def async_setup_entry(
     if not hass.data.get(DOMAIN, {}).get("_groups_added"):
         try:
             from .group import (
+                create_cast_group_proxies,
                 get_group_manager,
                 LitheGroupMediaPlayer,
             )
@@ -81,7 +88,6 @@ async def async_setup_entry(
                 groups = mgr.list_groups()
                 for g in groups:
                     entities.append(LitheGroupMediaPlayer(hass, g))
-                hass.data[DOMAIN]["_groups_added"] = True
                 hass.data[DOMAIN]["_group_async_add_entities"] = async_add_entities
                 _LOGGER.info("Created %d Lithe group media_player entities", len(groups))
 
@@ -90,15 +96,13 @@ async def async_setup_entry(
                     _LOGGER.info("Lithe groups changed — restart required to fully apply add/remove")
                 mgr.register_listener(_on_groups_changed)
 
-            # Note: Cast group proxies are NOT created. Earlier attempts
-            # to put Cast groups in HA's stock Group/Join picker proved
-            # confusing — the join picker is multi-select toggle UI
-            # which doesn't match Cast group routing semantics ("send my
-            # audio TO this Cast group" is a single-target operation,
-            # not a join). Cast groups are selected via the dedicated
-            # select.lithe_audio_*_cast_group entity instead. The Group
-            # icon then correctly shows only Lithe speakers — useful for
-            # pairing PRO 2 with the Sub woofer.
+            proxies = create_cast_group_proxies(hass, entry.data["host"])
+            entities.extend(proxies)
+            hass.data[DOMAIN]["_groups_added"] = True
+            _LOGGER.info(
+                "Created %d Google Cast group proxies for the Join picker",
+                len(proxies),
+            )
         except Exception as e:
             _LOGGER.error("Failed to set up group entities: %s", e)
 
@@ -108,10 +112,9 @@ async def async_setup_entry(
 class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlayerEntity):
     """Lithe Audio speaker media player entity."""
 
-    _attr_has_entity_name = True
-    # Named "A Player" so it sorts to the top of the device's Controls panel
-    # (HA sorts entities alphabetically by friendly name).
-    _attr_name = "A Player"
+    # This is the device's primary entity, so use the speaker name directly
+    # instead of appending a generic entity name such as "A Player".
+    _attr_has_entity_name = False
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
@@ -120,13 +123,23 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         self._client = coordinator.client
 
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_player"
+        self._attr_name = (
+            self._client.state.name
+            or entry.title.rsplit(" (", 1)[0]
+            or PRODUCT_NAMES.get(self._product, "Lithe Audio")
+        )
 
         # Build source list from product capability matrix.
         #
         # MB#50 is feedback-only in the working C4 driver. Populated local
         # favourites are appended dynamically and use real playback commands.
         src_ids = PRODUCT_SOURCES.get(self._product, list(SOURCES.keys()))
-        self._source_list = []
+        # Only expose source actions that have a verified activation command.
+        # MB#50 values for Spotify, AirPlay, Cast, etc. are feedback-only and
+        # must not be presented as if HA can start those services directly.
+        self._source_list = ["No Source"]
+        if 19 in src_ids:
+            self._source_list.append("Bluetooth")
         # Reverse-lookup name → id (still includes AUX/SPDIF/BT so
         # Browse Media can switch to them and source_name still
         # displays them when they activate themselves)
@@ -259,6 +272,12 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         renders that icon because we enable the GROUPING feature flag.
         """
         base = list(self._source_list)
+
+        # Keep an externally-owned current source visible in the selector even
+        # though re-selecting it cannot launch that provider from LUCI.
+        current = self._client.state.source_name
+        if current and current not in base:
+            base.insert(0, current)
 
         # Favourites — each saved one inline so user can pick directly
         try:
@@ -640,10 +659,28 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
     async def async_select_source(self, source: str) -> None:
         """Switch source by friendly name. Handles:
-          - Local inputs (USB/AUX/SPDIF/Bluetooth/Favourites) → MB#50
+          - No Source → release the current audio path with MB#50
+          - Bluetooth → start the speaker's Bluetooth service
           - "♥ Favourite N: <name>" → plays saved favourite N
         Cast groups are reached via the Group icon now, not this dropdown.
         """
+        # HA can submit the currently selected app-owned source. It is already
+        # active and has no LUCI launch command, so treat this as a no-op.
+        if source == self._client.state.source_name:
+            return
+
+        if source == "No Source":
+            await self._client._send(0x02, MB_SOURCE, "0")  # noqa: SLF001
+            await asyncio.sleep(0.3)
+            await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
+            return
+
+        if source == "Bluetooth" and "Bluetooth" in self._source_list:
+            await self._client.async_bluetooth(BT_ON)
+            await asyncio.sleep(0.5)
+            await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
+            return
+
         # ── Favourite picker ──────────────────────────────────────────
         if source.startswith("♥ Favourite "):
             try:
@@ -672,28 +709,10 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 _LOGGER.warning("Native favourite play failed: %s", e)
             return
 
-        # MB#50 reports the source; it does not activate a playback pipeline.
-        # Clear any active Cast routing first.
-        prev_cast = getattr(self._client.state, "active_cast_group", "")
-        if prev_cast:
-            try:
-                self._client.state.active_cast_group = ""
-                self._client.state.active_cast_group_entity = ""
-            except Exception:
-                pass
-
-        src_id = self._source_id_by_name.get(source)
-        if src_id is None:
-            _LOGGER.warning(
-                "select_source: unknown source %r (available: %s)",
-                source, self.source_list,
-            )
-            return
-
         _LOGGER.warning(
-            "select_source: %s (id=%d) cannot be activated with MB#50; "
-            "use Browse Media or play_media instead",
-            source, src_id,
+            "select_source: %r has no verified LUCI activation command "
+            "(available actions: %s)",
+            source, self.source_list,
         )
 
     async def async_play_media(
@@ -718,6 +737,29 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         sounds in Home Assistant and works with the built-in voice
         assistant announcement UI, dashboard buttons, automations, etc.
         """
+        # Apple TV app item delegated to HA's official Apple TV entity.
+        if media_id.startswith(APPLE_TV_CONTENT_PREFIX):
+            try:
+                apple_entity_id, apple_source = decode_apple_tv_content(media_id)
+            except ValueError as err:
+                _LOGGER.warning("Invalid Apple TV browse item: %s", err)
+                return
+            if apple_source is None:
+                return
+            await self.hass.services.async_call(
+                MEDIA_PLAYER_DOMAIN,
+                "select_source",
+                {"entity_id": apple_entity_id, "source": apple_source},
+                blocking=True,
+                context=self._context,
+            )
+            _LOGGER.info(
+                "Launched Apple TV source %r on %s",
+                apple_source,
+                apple_entity_id,
+            )
+            return
+
         # Spotify library item delegated to HA's official Spotify entity.
         # That entity owns OAuth, library browsing, and Spotify Connect;
         # Lithe remains responsible for local speaker state and controls.
@@ -1035,6 +1077,16 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
           ├── 🔊 Text-to-speech   (from HA media_source)
           └── …other HA sources
         """
+        if media_content_id and media_content_id.startswith(
+            APPLE_TV_CONTENT_PREFIX
+        ):
+            apple_entity_id, apple_source = decode_apple_tv_content(
+                media_content_id
+            )
+            if apple_source is not None:
+                raise BrowseError("Apple TV app items are playable, not folders")
+            return self._build_apple_tv_root(apple_entity_id)
+
         # Delegate wrapped Spotify folders to HA's official Spotify entity.
         if media_content_id and media_content_id.startswith(SPOTIFY_CONTENT_PREFIX):
             spotify_entity_id, spotify_content_id = decode_spotify_content(
@@ -1207,7 +1259,25 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 ),
             ))
 
-        # 5) HA media sources (Radio Browser, My Media, TTS, etc.)
+        # 5) Apple TV entities. The official integration exposes installed
+        # apps as media sources; selecting one launches it on that Apple TV.
+        for apple_entity_id in self._apple_tv_entity_ids():
+            apple_state = self.hass.states.get(apple_entity_id)
+            apple_name = apple_state.name if apple_state else apple_entity_id
+            children.append(BrowseMedia(
+                title=f"Apple TV - {apple_name}",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=encode_apple_tv_content(apple_entity_id, None),
+                media_content_type=MediaType.APPS,
+                can_play=False,
+                can_expand=True,
+                thumbnail=(
+                    apple_state.attributes.get("entity_picture")
+                    if apple_state else None
+                ),
+            ))
+
+        # 6) HA media sources (Radio Browser, My Media, TTS, etc.)
         # Filter out non-audio sources (Image, Image upload, AI generated
         # images, Camera) per user request — these aren't useful on an
         # audio-only speaker.
@@ -1276,6 +1346,50 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             and entry.platform == "spotify"
             and entry.disabled_by is None
             and self.hass.states.get(entry.entity_id) is not None
+        )
+
+    def _apple_tv_entity_ids(self) -> list[str]:
+        """Return enabled, loaded official Apple TV media players."""
+        registry = er.async_get(self.hass)
+        return sorted(
+            entry.entity_id
+            for entry in registry.entities.values()
+            if entry.domain == MEDIA_PLAYER_DOMAIN
+            and entry.platform == "apple_tv"
+            and entry.disabled_by is None
+            and self.hass.states.get(entry.entity_id) is not None
+        )
+
+    def _build_apple_tv_root(self, apple_entity_id: str) -> BrowseMedia:
+        """Build the Apps folder supported by HA's Apple TV integration."""
+        apple_state = self.hass.states.get(apple_entity_id)
+        if apple_state is None:
+            raise BrowseError(f"Apple TV entity {apple_entity_id} is not loaded")
+
+        sources = apple_state.attributes.get("source_list", []) or []
+        children = [
+            BrowseMedia(
+                title=source,
+                media_class=MediaClass.APP,
+                media_content_id=encode_apple_tv_content(
+                    apple_entity_id, source
+                ),
+                media_content_type=MediaType.APP,
+                can_play=True,
+                can_expand=False,
+            )
+            for source in sources
+            if isinstance(source, str) and source
+        ]
+        return BrowseMedia(
+            title=f"Apple TV - {apple_state.name}",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=encode_apple_tv_content(apple_entity_id, None),
+            media_content_type=MediaType.APPS,
+            can_play=False,
+            can_expand=True,
+            children=children,
+            children_media_class=MediaClass.APP,
         )
 
     def _build_spotify_root(self, spotify_entity_id: str) -> BrowseMedia:

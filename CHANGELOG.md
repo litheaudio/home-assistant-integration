@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.15] — 2026-09-30
+
+### Added
+
+- Show each loaded Home Assistant Apple TV entity in Lithe Browse Media and
+  expose its official Apps/source list. Selecting an app delegates to the
+  Apple TV entity's `select_source` action.
+- Create hidden proxy entities for discovered Google Cast speaker groups so
+  Home Assistant's Join picker displays Cast groups alongside Lithe speakers.
+
+### Notes
+
+- Apple TV exposes installed apps, not an Apple Music library catalogue.
+- Selecting a Cast group routes subsequent compatible media through its
+  underlying Home Assistant Cast media-player entity.
+
+## [1.4.14] — 2026-09-30
+
+### Fixed
+
+- Name the primary media-player entity after its speaker instead of the
+  hard-coded sorting label `A Player`.
+- Populate the source selector with verified actions: release the audio path,
+  enable Bluetooth on supported products, and play populated favourites.
+- Keep an externally-owned current source visible without pretending MB#50
+  can launch Spotify, AirPlay, Cast, or other provider playback pipelines.
+
 ## [1.4.13] — 2026-09-30
 
 ### Fixed
