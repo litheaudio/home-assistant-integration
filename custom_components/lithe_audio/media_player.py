@@ -37,6 +37,7 @@ from .spotify_bridge import (
     choose_spotify_source,
     decode_spotify_content,
     encode_spotify_content,
+    spotify_browse_request,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -1040,8 +1041,14 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 raise RuntimeError(
                     f"Spotify entity {spotify_entity_id} is not loaded"
                 )
-            result = await spotify_entity.async_browse_media(
+            # Spotify's browser recognizes its root only as (None, None).
+            # Our synthetic Lithe folder has type "spotify", so do not pass
+            # that wrapper type into the official integration for root browse.
+            spotify_content_type, spotify_content_id = spotify_browse_request(
                 media_content_type, spotify_content_id
+            )
+            result = await spotify_entity.async_browse_media(
+                spotify_content_type, spotify_content_id
             )
             return self._wrap_spotify_browse(result, spotify_entity_id)
 

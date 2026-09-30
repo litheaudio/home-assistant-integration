@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.9] — 2026-09-30
+
+### Fixed
+
+- Translate the synthetic Lithe Spotify folder to `(None, None)` when opening
+  the official Spotify browser root. Passing `spotify / None` caused Home
+  Assistant to report `Media not found: spotify / None`.
+
 ## [1.4.8] — 2026-09-30
 
 ### Added

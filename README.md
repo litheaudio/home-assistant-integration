@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.8** — Spotify library browsing and Spotify Connect playback through Home Assistant's official Spotify integration, plus the 1.4.7 control and artwork fixes.
+**Latest: 1.4.9** — Spotify library browsing and Spotify Connect playback through Home Assistant's official Spotify integration, including corrected Spotify root browsing.
 
 ---
 

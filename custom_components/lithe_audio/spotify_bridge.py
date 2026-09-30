@@ -44,6 +44,15 @@ def normalize_device_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
 
+def spotify_browse_request(
+    content_type: str | None, content_id: str | None
+) -> tuple[str | None, str | None]:
+    """Translate the synthetic Lithe root into Spotify's root request."""
+    if content_id is None:
+        return None, None
+    return content_type, content_id
+
+
 def choose_spotify_source(
     sources: Iterable[str], candidates: Iterable[str]
 ) -> str | None:
