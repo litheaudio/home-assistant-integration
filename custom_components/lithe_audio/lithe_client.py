@@ -146,6 +146,7 @@ class LitheClient:
         self._artwork_refresh_task: Optional[asyncio.Task] = None
         self._metadata_refresh_task: Optional[asyncio.Task] = None
         self._volume_before_mute: int | None = None
+        self._last_nonzero_volume: int = self.state.volume
         # Match the working Control4 driver: serialize all LUCI writes and
         # leave 100 ms between packets.
         self._send_lock = asyncio.Lock()
@@ -393,12 +394,22 @@ class LitheClient:
     async def async_set_volume(self, level: int) -> None:
         # RID 0x0000 reaches the MCU gain write. RID 0xAAAA may only update
         # the LS-side state without changing audible volume.
+        level = max(0, min(100, level))
+        if level > 0:
+            self._last_nonzero_volume = level
+        if level > 0 and self.state.muted:
+            await self._send(0x02, MB_TRANSPORT, MUTE_OFF)
+            await asyncio.sleep(0.1)
+            self.state.muted = False
+            self._volume_before_mute = None
         await self._send(
             0x02,
             MB_VOLUME,
-            str(max(0, min(100, level))),
-            remote_id=0x0000 if self.use_tls else 0xAAAA,
+            str(level),
+            remote_id=0x0000,
         )
+        self.state.volume = level
+        self._notify()
 
     async def async_mute(self, mute: bool) -> None:
         """Mute / unmute speaker.
@@ -418,13 +429,21 @@ class LitheClient:
         # Some LS10/MCU builds clear the audible gain while muting but do not
         # restore it on UNMUTE. Reapply the pre-mute level through RID 0x0000,
         # the same path required for audible volume writes.
-        restore_volume = self._volume_before_mute
-        if restore_volume is None and self.state.volume > 0:
-            restore_volume = self.state.volume
-        if restore_volume is not None:
-            await asyncio.sleep(0.1)
-            await self.async_set_volume(restore_volume)
+        restore_volume = self._volume_before_mute or self._last_nonzero_volume
         self.state.muted = False
+        await asyncio.sleep(0.15)
+        # A same-value MB#64 can be discarded by the MCU while its DAC gain
+        # remains muted. Move one step first, then restore the saved level.
+        wake_volume = restore_volume - 1 if restore_volume > 1 else 2
+        await self._send(
+            0x02, MB_VOLUME, str(wake_volume), remote_id=0x0000,
+        )
+        await asyncio.sleep(0.1)
+        await self._send(
+            0x02, MB_VOLUME, str(restore_volume), remote_id=0x0000,
+        )
+        self.state.volume = restore_volume
+        self._last_nonzero_volume = restore_volume
         self._volume_before_mute = None
         self._notify()
 
@@ -1010,12 +1029,20 @@ class LitheClient:
 
         elif mbid == MB_VOLUME:
             try:
-                self.state.volume = int(payload)
+                volume = int(payload)
             except ValueError:
                 pass
+            else:
+                self.state.volume = volume
+                if volume > 0:
+                    self._last_nonzero_volume = volume
 
         elif mbid == MB_MUTE:
-            self.state.muted = (payload == "1" or payload.upper() == "MUTE")
+            mute_state = payload.strip().upper()
+            if mute_state in {"1", "MUTE"}:
+                self.state.muted = True
+            elif mute_state in {"0", "UNMUTE"}:
+                self.state.muted = False
 
         elif mbid == MB_SOURCE:
             try:

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.18] — 2026-09-30
+
+### Fixed
+
+- Restore audible output after unmute with an MCU-routed MB64 wake step followed
+  by the saved volume, preventing firmware from discarding an unchanged value.
+- Use RemoteID `0x0000` for audible volume writes on both LS9 and LS10.
+- Preserve the last non-zero volume for externally initiated mute states and
+  ignore empty MB63 acknowledgements instead of treating them as unmuted.
+- Setting a non-zero volume while muted now explicitly unmutes first.
+
 ## [1.4.17] — 2026-09-30
 
 ### Fixed
