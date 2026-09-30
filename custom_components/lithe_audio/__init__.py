@@ -1,6 +1,7 @@
 """Lithe Audio integration for Home Assistant."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import socket as _sock
 
@@ -80,6 +81,35 @@ def _infer_product(entry_data: dict) -> str:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Lithe Audio from a config entry."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if not domain_data.get("_spotify_compat_started"):
+        domain_data["_spotify_compat_started"] = True
+
+        async def _patch_and_retry_spotify() -> None:
+            """Patch the affected parser, then retry failed Spotify entries."""
+            from .spotify_compat import apply_spotifyaio_compat
+
+            if not apply_spotifyaio_compat():
+                return
+            # Spotify is an optional after-dependency. Its initial setup has
+            # completed, but allow state transitions to settle before reload.
+            await asyncio.sleep(1.0)
+            for spotify_entry in hass.config_entries.async_entries("spotify"):
+                state_name = getattr(spotify_entry.state, "name", "").lower()
+                if state_name == "loaded":
+                    continue
+                _LOGGER.warning(
+                    "Retrying Spotify config entry %s after applying the "
+                    "playlist compatibility patch",
+                    spotify_entry.title,
+                )
+                try:
+                    await hass.config_entries.async_reload(spotify_entry.entry_id)
+                except Exception as err:
+                    _LOGGER.warning("Spotify compatibility reload failed: %s", err)
+
+        hass.async_create_task(_patch_and_retry_spotify())
+
     # Version banner — helps diagnose partial-install issues. The user
     # can grep the log for this line to confirm the running version.
     def _read_install_info() -> tuple[str, list[str]]:
@@ -146,25 +176,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data = {**entry.data, CONF_PRODUCT: inferred}
         hass.config_entries.async_update_entry(entry, data=new_data)
 
-    # Cleanup: earlier versions registered Cast group proxy entities
-    # under the lithe_audio domain. v1.3.5 removes that approach
-    # entirely (Cast groups are selected via the dedicated select
-    # entity, not the join picker). Remove any leftover proxy registry
-    # entries so they don't show as ghosts.
+    # Cleanup only obsolete standalone proxy devices. Cast group proxy
+    # entities are current again and power the stock Join picker.
     try:
-        from homeassistant.helpers import device_registry as dr, entity_registry as er
-        ent_reg = er.async_get(hass)
+        from homeassistant.helpers import device_registry as dr
         dev_reg = dr.async_get(hass)
-        # Remove stale proxy ENTITIES (unique_id starts with lithe_cast_proxy_)
-        stale_entity_ids = [
-            e.entity_id for e in ent_reg.entities.values()
-            if e.platform == DOMAIN
-            and e.unique_id
-            and e.unique_id.startswith("lithe_cast_proxy_")
-        ]
-        for eid in stale_entity_ids:
-            ent_reg.async_remove(eid)
-            _LOGGER.info("Removed stale Cast proxy entity: %s", eid)
         # Remove stale standalone proxy DEVICES (v1.1.98 leftovers)
         for dev in list(dev_reg.devices.values()):
             for domain, ident in dev.identifiers:

@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.17] — 2026-09-30
+
+### Fixed
+
+- Add a version-gated `spotifyaio 2.0.2` compatibility shim for Spotify's
+  2026 playlist schema: metadata-only playlists no longer fail on a missing
+  nested `items` list, and playlist entry `item` fields are normalized to the
+  legacy `track` field expected by the library.
+- Automatically retry failed official Spotify config entries after applying
+  the shim, restoring account-scoped Browse Media without a manual reload.
+- Stop deleting the Cast group proxy entities used by the Join picker during
+  each Lithe speaker setup.
+
 ## [1.4.16] — 2026-09-30
 
 ### Fixed
