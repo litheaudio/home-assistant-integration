@@ -399,10 +399,7 @@ class LitheClient:
             self._last_nonzero_volume = level
         if level > 0 and self.state.muted:
             await self._send(0x02, MB_TRANSPORT, MUTE_OFF)
-            await self._send(
-                0x02, MB_TRANSPORT, MUTE_OFF, remote_id=0x0000,
-            )
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.25)
             self.state.muted = False
             self._volume_before_mute = None
         await self._send(
@@ -428,29 +425,21 @@ class LitheClient:
             self._notify()
             return
 
-        # Clear both the application-side and MCU-side mute latches. Captures
-        # show that source players can retain the former while the DAC retains
-        # the latter, so a single RemoteID is not sufficient on every build.
+        # Captured PRO 2 logs prove that the standard 0xAAAA MB#40 UNMUTE
+        # restores Spotify's saved volume and changes the hardware mute state
+        # from 1 to 0. Do not follow it with a zero-volume wake sequence: that
+        # races Spotify and can leave its stored volume at zero.
         await self._send(0x02, MB_TRANSPORT, MUTE_OFF)
-        await self._send(0x02, MB_TRANSPORT, MUTE_OFF, remote_id=0x0000)
-        # Some LS10/MCU builds clear the audible gain while muting but do not
-        # restore it on UNMUTE. Reapply the pre-mute level through RID 0x0000,
-        # the same path required for audible volume writes.
         restore_volume = self._volume_before_mute or self._last_nonzero_volume
+        await asyncio.sleep(0.35)
         self.state.muted = False
-        await asyncio.sleep(0.15)
-        # A same-value MB#64 can be discarded while the DAC gain remains
-        # muted. The captured working device path crosses zero before raising
-        # volume, which also makes source players emit MB#63 UNMUTE feedback.
-        await self._send(
-            0x02, MB_VOLUME, "0", remote_id=0x0000,
-        )
-        await asyncio.sleep(0.1)
-        await self._send(
-            0x02, MB_VOLUME, str(restore_volume), remote_id=0x0000,
-        )
-        await self._send(0x02, MB_TRANSPORT, MUTE_OFF, remote_id=0x0000)
-        self.state.volume = restore_volume
+        # Only recover volume if device feedback actually reports zero after
+        # UNMUTE. Normal Spotify playback retains its pre-mute MB#64 value.
+        if self.state.volume <= 0 and restore_volume > 0:
+            await self._send(
+                0x02, MB_VOLUME, str(restore_volume), remote_id=0x0000,
+            )
+            self.state.volume = restore_volume
         self._last_nonzero_volume = restore_volume
         self._volume_before_mute = None
         self._notify()

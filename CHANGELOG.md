@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.21] — 2026-10-02
+
+### Fixed
+
+- Remove the zero-volume and duplicate-UNMUTE fallback that raced Spotify and
+  left its stored volume at zero after the initial UNMUTE had already worked.
+- Use the log-confirmed MB40 `UNMUTE` on RemoteID `0xAAAA`; restore MB64 only
+  when device feedback still reports zero after a settling delay.
+
 ## [1.4.20] — 2026-10-02
 
 ### Removed
