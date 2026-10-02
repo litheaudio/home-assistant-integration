@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.23** — Confirms unmute from MB63 feedback, retries unconfirmed MB40 commands through the MCU route, and repairs the alarm editor.
+**Latest: 1.4.24** — Matches the bench-verified mute contract: exact MB40 commands, MB63-only state, no mute inference from volume, and no speculative MB63 reads.
 
 ---
 

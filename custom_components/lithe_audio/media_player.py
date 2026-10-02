@@ -241,8 +241,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         return self._client.state.volume / 100.0
 
     @property
-    def is_volume_muted(self) -> bool:
-        return self._client.state.muted
+    def is_volume_muted(self) -> bool | None:
+        state = self._client.state
+        return state.muted if state.mute_state_known else None
 
     @property
     def source(self) -> str | None:

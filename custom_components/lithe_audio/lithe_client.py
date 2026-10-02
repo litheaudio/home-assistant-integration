@@ -56,6 +56,7 @@ class SpeakerState:
     source_id: int = 0
     volume: int = 50
     muted: bool = False
+    mute_state_known: bool = False
     position_ms: int = 0
     position_updated_at: float = 0.0   # Unix time when MB#49 was last seen
 
@@ -297,9 +298,9 @@ class LitheClient:
     async def async_refresh(self) -> None:
         """Request all state from speaker.
 
-        NOTE: empirically this firmware responds to GETs on Tx_-only
+        NOTE: empirically this firmware responds to GETs on several Tx_-only
         mailboxes (MB#42 Now Playing, MB#50 Source, MB#51 Play State,
-        MB#49 Position, MB#63 Mute, MB#210 BT Status) even though the
+        MB#49 Position, MB#210 BT Status) even though the
         spec marks them as push-only. We send them because they're the
         only way to get the speaker's current state on connect or after
         a stale period — the spec-only "push on change" never fires if
@@ -314,7 +315,6 @@ class LitheClient:
                    MB_INTERFACE_IP,     # 123 Interface IP
                    MB_NETWORK_STATUS,   # 124 Network Status
                    MB_VOLUME,           # 64  Volume
-                   MB_MUTE,             # 63  Mute (Tx_ but responds)
                    MB_SOURCE,           # 50  Current Source (Tx_ but responds)
                    MB_PLAY_STATE,       # 51  Play State (Tx_ but responds)
                    MB_NOW_PLAYING,      # 42  Now Playing JSON (Tx_ but responds)
@@ -412,8 +412,6 @@ class LitheClient:
                 remote_id=self._mute_remote_id(),
             )
             await asyncio.sleep(0.25)
-            self.state.muted = False
-            self._volume_before_mute = None
         await self._send(
             0x02,
             MB_VOLUME,
@@ -436,8 +434,6 @@ class LitheClient:
                 0x02, MB_TRANSPORT, MUTE_ON,
                 remote_id=self._mute_remote_id(),
             )
-            self.state.muted = True
-            self._notify()
             return
 
         # Spotify/AirPlay normally use RID 0xAAAA; Cast requires MCU route
@@ -455,21 +451,6 @@ class LitheClient:
             self._mute_feedback_revision != feedback_revision
             and not self.state.muted
         )
-        if not confirmed_unmuted and primary_remote_id != 0x0000:
-            _LOGGER.warning(
-                "MB#40 UNMUTE on RID 0x%04X was not confirmed by MB#63; "
-                "retrying through MCU RID 0x0000",
-                primary_remote_id,
-            )
-            await self._send(
-                0x02, MB_TRANSPORT, MUTE_OFF, remote_id=0x0000,
-            )
-            await asyncio.sleep(0.35)
-            confirmed_unmuted = (
-                self._mute_feedback_revision != feedback_revision
-                and not self.state.muted
-            )
-
         # Only recover volume if device feedback actually reports zero after
         # UNMUTE. Normal Spotify playback retains its pre-mute MB#64 value.
         if confirmed_unmuted and self.state.volume <= 0 and restore_volume > 0:
@@ -1075,10 +1056,12 @@ class LitheClient:
             mute_state = payload.strip().upper()
             if mute_state in {"1", "MUTE"}:
                 self.state.muted = True
+                self.state.mute_state_known = True
                 self._mute_feedback_revision += 1
                 _LOGGER.info("Speaker confirmed mute state through MB#63: MUTE")
             elif mute_state in {"0", "UNMUTE"}:
                 self.state.muted = False
+                self.state.mute_state_known = True
                 self._mute_feedback_revision += 1
                 _LOGGER.info("Speaker confirmed mute state through MB#63: UNMUTE")
 

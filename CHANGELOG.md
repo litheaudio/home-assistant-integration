@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.24] — 2026-10-02
+
+### Fixed
+
+- Make MB63 `MUTE`/`UNMUTE` the sole authority for the displayed mute state.
+- Remove optimistic mute-state changes after sending MB40 commands and while
+  changing volume.
+- Stop polling MB63 with an unsupported GET on connect/refresh.
+- Keep MB64 volume feedback independent from mute state.
+- Use exact RemoteID `0xAAAA` MB40 frames for normal sources and the
+  bench-noted `0x0000` candidate only while Google Cast source 24 is active.
+
 ## [1.4.23] — 2026-10-02
 
 ### Fixed
