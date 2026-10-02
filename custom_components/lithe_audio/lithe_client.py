@@ -147,6 +147,9 @@ class LitheClient:
         self._metadata_refresh_task: Optional[asyncio.Task] = None
         self._volume_before_mute: int | None = None
         self._last_nonzero_volume: int = self.state.volume
+        # Incremented only by valid MB#63 MUTE/UNMUTE feedback. Command code
+        # uses this to distinguish a real state transition from local state.
+        self._mute_feedback_revision: int = 0
         # Match the working Control4 driver: serialize all LUCI writes and
         # leave 100 ms between packets.
         self._send_lock = asyncio.Lock()
@@ -437,19 +440,39 @@ class LitheClient:
             self._notify()
             return
 
-        # Spotify/AirPlay use RID 0xAAAA; Cast requires the MCU route 0x0000.
-        # Do not follow this with a zero-volume wake sequence: that races
-        # Spotify and can leave its stored volume at zero.
+        # Spotify/AirPlay normally use RID 0xAAAA; Cast requires MCU route
+        # 0x0000. Only MB#63 proves that the hardware state actually changed.
+        feedback_revision = self._mute_feedback_revision
+        primary_remote_id = self._mute_remote_id()
         await self._send(
             0x02, MB_TRANSPORT, MUTE_OFF,
-            remote_id=self._mute_remote_id(),
+            remote_id=primary_remote_id,
         )
         restore_volume = self._volume_before_mute or self._last_nonzero_volume
         await asyncio.sleep(0.35)
-        self.state.muted = False
+
+        confirmed_unmuted = (
+            self._mute_feedback_revision != feedback_revision
+            and not self.state.muted
+        )
+        if not confirmed_unmuted and primary_remote_id != 0x0000:
+            _LOGGER.warning(
+                "MB#40 UNMUTE on RID 0x%04X was not confirmed by MB#63; "
+                "retrying through MCU RID 0x0000",
+                primary_remote_id,
+            )
+            await self._send(
+                0x02, MB_TRANSPORT, MUTE_OFF, remote_id=0x0000,
+            )
+            await asyncio.sleep(0.35)
+            confirmed_unmuted = (
+                self._mute_feedback_revision != feedback_revision
+                and not self.state.muted
+            )
+
         # Only recover volume if device feedback actually reports zero after
         # UNMUTE. Normal Spotify playback retains its pre-mute MB#64 value.
-        if self.state.volume <= 0 and restore_volume > 0:
+        if confirmed_unmuted and self.state.volume <= 0 and restore_volume > 0:
             await self._send(
                 0x02, MB_VOLUME, str(restore_volume), remote_id=0x0000,
             )
@@ -1052,8 +1075,12 @@ class LitheClient:
             mute_state = payload.strip().upper()
             if mute_state in {"1", "MUTE"}:
                 self.state.muted = True
+                self._mute_feedback_revision += 1
+                _LOGGER.info("Speaker confirmed mute state through MB#63: MUTE")
             elif mute_state in {"0", "UNMUTE"}:
                 self.state.muted = False
+                self._mute_feedback_revision += 1
+                _LOGGER.info("Speaker confirmed mute state through MB#63: UNMUTE")
 
         elif mbid == MB_SOURCE:
             try:

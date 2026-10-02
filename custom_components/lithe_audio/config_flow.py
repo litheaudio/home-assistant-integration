@@ -24,10 +24,10 @@ from homeassistant.helpers import selector
 from .const import (
     BUNDLED_CERT_KEY, BUNDLED_CERT_PEM,
     CONF_CERT_PATH, CONF_KEY_PATH, CONF_PRODUCT, CONF_USE_TLS,
-    DEFAULT_PORT, DOMAIN, LS10_PRODUCTS, LS9_PRODUCTS,
+    DATA_COORDINATOR, DEFAULT_PORT, DOMAIN, LS10_PRODUCTS, LS9_PRODUCTS,
     PRODUCT_IO1, PRODUCT_MICRO, PRODUCT_NAMES,
     PRODUCT_PRO, PRODUCT_PRO2, PRODUCT_V2, PRODUCT_V3,
-    ADHAN_PRESETS, QURAN_JUZ, quran_juz_label, all_preset_options,
+    ADHAN_PRESETS, QURAN_JUZ, caps, quran_juz_label, all_preset_options,
 )
 from .discovery import DiscoveredDevice, async_discover
 
@@ -733,6 +733,10 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
             SOURCE_CHIME:     "Embedded Chime (1-10)",
             SOURCE_URL:       "Custom HTTP URL",
         }
+        chime_slot_max = max(
+            1,
+            int(caps(self._entry.data.get(CONF_PRODUCT, "")).get("chimes", 10) or 10),
+        )
         action_options = {
             "save":   "💾  Save",
         }
@@ -786,7 +790,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
             vol.Optional("favourite_slot", default=existing.get("favourite_slot", 1)):
                 vol.All(int, vol.Range(min=1, max=9)),
             vol.Optional("chime_slot", default=existing.get("chime_slot", 1)):
-                vol.All(int, vol.Range(min=1, max=10)),
+                vol.All(int, vol.Range(min=1, max=chime_slot_max)),
             vol.Optional("custom_url", default=existing.get("custom_url", "")): str,
             vol.Required("volume", default=existing.get("volume", 60)):
                 vol.All(int, vol.Range(min=0, max=100)),

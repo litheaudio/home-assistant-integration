@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.23] — 2026-10-02
+
+### Fixed
+
+- Stop marking the speaker unmuted optimistically; MB63 `UNMUTE` is now the
+  authoritative confirmation.
+- Retry an unconfirmed Spotify/AirPlay MB40 `UNMUTE` through RemoteID `0x0000`
+  while retaining `0xAAAA` as the first, capture-verified route.
+- Repair the alarm add/edit form by importing its coordinator data key.
+- Use each product's actual chime-slot capability in the alarm editor, including
+  all 15 slots on PRO 2.
+
 ## [1.4.22] — 2026-10-02
 
 ### Fixed
