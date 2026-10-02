@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.18** — Reliably restores audible volume after mute, while retaining the Spotify 2026 compatibility, HACS branding, and Cast Join support.
+**Latest: 1.4.20** — Removes the non-functional Apple TV feed from Browse Media while retaining Spotify, local audio sources, and Cast grouping.
 
 ---
 

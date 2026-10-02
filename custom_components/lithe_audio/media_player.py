@@ -34,11 +34,6 @@ from .const import (
     PRODUCT_NAMES, PRODUCT_SOURCES, SOURCES,
 )
 from .coordinator import LitheAudioCoordinator
-from .apple_tv_bridge import (
-    APPLE_TV_CONTENT_PREFIX,
-    decode_apple_tv_content,
-    encode_apple_tv_content,
-)
 from .spotify_bridge import (
     SPOTIFY_CONTENT_PREFIX,
     SPOTIFY_LIBRARY_ITEMS,
@@ -737,29 +732,6 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         sounds in Home Assistant and works with the built-in voice
         assistant announcement UI, dashboard buttons, automations, etc.
         """
-        # Apple TV app item delegated to HA's official Apple TV entity.
-        if media_id.startswith(APPLE_TV_CONTENT_PREFIX):
-            try:
-                apple_entity_id, apple_source = decode_apple_tv_content(media_id)
-            except ValueError as err:
-                _LOGGER.warning("Invalid Apple TV browse item: %s", err)
-                return
-            if apple_source is None:
-                return
-            await self.hass.services.async_call(
-                MEDIA_PLAYER_DOMAIN,
-                "select_source",
-                {"entity_id": apple_entity_id, "source": apple_source},
-                blocking=True,
-                context=self._context,
-            )
-            _LOGGER.info(
-                "Launched Apple TV source %r on %s",
-                apple_source,
-                apple_entity_id,
-            )
-            return
-
         # Spotify library item delegated to HA's official Spotify entity.
         # That entity owns OAuth, library browsing, and Spotify Connect;
         # Lithe remains responsible for local speaker state and controls.
@@ -1077,16 +1049,6 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
           ├── 🔊 Text-to-speech   (from HA media_source)
           └── …other HA sources
         """
-        if media_content_id and media_content_id.startswith(
-            APPLE_TV_CONTENT_PREFIX
-        ):
-            apple_entity_id, apple_source = decode_apple_tv_content(
-                media_content_id
-            )
-            if apple_source is not None:
-                raise BrowseError("Apple TV app items are playable, not folders")
-            return self._build_apple_tv_root(apple_entity_id)
-
         # Delegate wrapped Spotify folders to HA's official Spotify entity.
         if media_content_id and media_content_id.startswith(SPOTIFY_CONTENT_PREFIX):
             spotify_entity_id, spotify_content_id = decode_spotify_content(
@@ -1259,25 +1221,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 ),
             ))
 
-        # 5) Apple TV entities. The official integration exposes installed
-        # apps as media sources; selecting one launches it on that Apple TV.
-        for apple_entity_id in self._apple_tv_entity_ids():
-            apple_state = self.hass.states.get(apple_entity_id)
-            apple_name = apple_state.name if apple_state else apple_entity_id
-            children.append(BrowseMedia(
-                title=f"Apple TV - {apple_name}",
-                media_class=MediaClass.DIRECTORY,
-                media_content_id=encode_apple_tv_content(apple_entity_id, None),
-                media_content_type=MediaType.APPS,
-                can_play=False,
-                can_expand=True,
-                thumbnail=(
-                    apple_state.attributes.get("entity_picture")
-                    if apple_state else None
-                ),
-            ))
-
-        # 6) HA media sources (Radio Browser, My Media, TTS, etc.)
+        # 5) HA media sources (Radio Browser, My Media, TTS, etc.)
         # Filter out non-audio sources (Image, Image upload, AI generated
         # images, Camera) per user request — these aren't useful on an
         # audio-only speaker.
@@ -1346,50 +1290,6 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             and entry.platform == "spotify"
             and entry.disabled_by is None
             and self.hass.states.get(entry.entity_id) is not None
-        )
-
-    def _apple_tv_entity_ids(self) -> list[str]:
-        """Return enabled, loaded official Apple TV media players."""
-        registry = er.async_get(self.hass)
-        return sorted(
-            entry.entity_id
-            for entry in registry.entities.values()
-            if entry.domain == MEDIA_PLAYER_DOMAIN
-            and entry.platform == "apple_tv"
-            and entry.disabled_by is None
-            and self.hass.states.get(entry.entity_id) is not None
-        )
-
-    def _build_apple_tv_root(self, apple_entity_id: str) -> BrowseMedia:
-        """Build the Apps folder supported by HA's Apple TV integration."""
-        apple_state = self.hass.states.get(apple_entity_id)
-        if apple_state is None:
-            raise BrowseError(f"Apple TV entity {apple_entity_id} is not loaded")
-
-        sources = apple_state.attributes.get("source_list", []) or []
-        children = [
-            BrowseMedia(
-                title=source,
-                media_class=MediaClass.APP,
-                media_content_id=encode_apple_tv_content(
-                    apple_entity_id, source
-                ),
-                media_content_type=MediaType.APP,
-                can_play=True,
-                can_expand=False,
-            )
-            for source in sources
-            if isinstance(source, str) and source
-        ]
-        return BrowseMedia(
-            title=f"Apple TV - {apple_state.name}",
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=encode_apple_tv_content(apple_entity_id, None),
-            media_content_type=MediaType.APPS,
-            can_play=False,
-            can_expand=True,
-            children=children,
-            children_media_class=MediaClass.APP,
         )
 
     def _build_spotify_root(self, spotify_entity_id: str) -> BrowseMedia:

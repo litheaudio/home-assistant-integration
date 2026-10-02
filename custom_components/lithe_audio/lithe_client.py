@@ -399,6 +399,9 @@ class LitheClient:
             self._last_nonzero_volume = level
         if level > 0 and self.state.muted:
             await self._send(0x02, MB_TRANSPORT, MUTE_OFF)
+            await self._send(
+                0x02, MB_TRANSPORT, MUTE_OFF, remote_id=0x0000,
+            )
             await asyncio.sleep(0.1)
             self.state.muted = False
             self._volume_before_mute = None
@@ -425,23 +428,28 @@ class LitheClient:
             self._notify()
             return
 
+        # Clear both the application-side and MCU-side mute latches. Captures
+        # show that source players can retain the former while the DAC retains
+        # the latter, so a single RemoteID is not sufficient on every build.
         await self._send(0x02, MB_TRANSPORT, MUTE_OFF)
+        await self._send(0x02, MB_TRANSPORT, MUTE_OFF, remote_id=0x0000)
         # Some LS10/MCU builds clear the audible gain while muting but do not
         # restore it on UNMUTE. Reapply the pre-mute level through RID 0x0000,
         # the same path required for audible volume writes.
         restore_volume = self._volume_before_mute or self._last_nonzero_volume
         self.state.muted = False
         await asyncio.sleep(0.15)
-        # A same-value MB#64 can be discarded by the MCU while its DAC gain
-        # remains muted. Move one step first, then restore the saved level.
-        wake_volume = restore_volume - 1 if restore_volume > 1 else 2
+        # A same-value MB#64 can be discarded while the DAC gain remains
+        # muted. The captured working device path crosses zero before raising
+        # volume, which also makes source players emit MB#63 UNMUTE feedback.
         await self._send(
-            0x02, MB_VOLUME, str(wake_volume), remote_id=0x0000,
+            0x02, MB_VOLUME, "0", remote_id=0x0000,
         )
         await asyncio.sleep(0.1)
         await self._send(
             0x02, MB_VOLUME, str(restore_volume), remote_id=0x0000,
         )
+        await self._send(0x02, MB_TRANSPORT, MUTE_OFF, remote_id=0x0000)
         self.state.volume = restore_volume
         self._last_nonzero_volume = restore_volume
         self._volume_before_mute = None

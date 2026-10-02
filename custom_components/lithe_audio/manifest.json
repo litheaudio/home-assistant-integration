@@ -1,14 +1,14 @@
 {
   "domain": "lithe_audio",
   "name": "Lithe Audio",
-  "version": "1.4.18",
+  "version": "1.4.20",
   "config_flow": true,
   "documentation": "https://github.com/litheaudio/ha-lithe-audio",
   "issue_tracker": "https://github.com/litheaudio/ha-lithe-audio/issues",
   "codeowners": ["@litheaudio"],
   "requirements": ["pychromecast>=14.0.0", "aiohttp>=3.8.0"],
   "dependencies": ["http"],
-  "after_dependencies": ["apple_tv", "cast", "spotify"],
+  "after_dependencies": ["cast", "spotify"],
   "iot_class": "local_push",
   "integration_type": "device",
   "zeroconf": [

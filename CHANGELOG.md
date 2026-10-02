@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.20] — 2026-10-02
+
+### Removed
+
+- Remove Apple TV entities and app folders from Lithe Browse Media because
+  selecting them controls the Apple TV rather than playing through Lithe.
+- Remove the unused Apple TV content bridge and optional startup dependency.
+
+## [1.4.19] — 2026-09-30
+
+### Fixed
+
+- Clear both the application-side (`0xAAAA`) and MCU-side (`0x0000`) mute
+  latches when unmuting.
+- Restore volume using the captured working `0 -> saved level` MB64 sequence,
+  followed by a final MCU-routed `UNMUTE`.
+- Apply the dual-route unmute before a non-zero volume change while muted.
+
 ## [1.4.18] — 2026-09-30
 
 ### Fixed
