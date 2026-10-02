@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.21** — Fixes Spotify unmute using the exact speaker-log-confirmed MB40 sequence and removes the non-functional Apple TV feed.
+**Latest: 1.4.22** — Uses the exact MB40 mute protocol with source-aware routing: RemoteID `0xAAAA` for Spotify/AirPlay and `0x0000` for Google Cast.
 
 ---
 

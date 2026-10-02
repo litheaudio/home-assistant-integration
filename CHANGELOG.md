@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.22] — 2026-10-02
+
+### Fixed
+
+- Send MB40 ASCII `MUTE`/`UNMUTE` with RemoteID `0x0000` while Google Cast
+  (source 24) is active; retain the verified `0xAAAA` route for Spotify,
+  AirPlay, and other sources.
+- Apply the same source-aware route when a non-zero volume command first
+  unmutes the speaker.
+- Add byte-exact protocol coverage for both routes and MB63 text feedback.
+
 ## [1.4.21] — 2026-10-02
 
 ### Fixed

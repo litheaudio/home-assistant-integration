@@ -391,6 +391,12 @@ class LitheClient:
 
     # ── Commands ───────────────────────────────────────────────────────────
 
+    def _mute_remote_id(self) -> int:
+        """Return the source-specific LUCI route for MB#40 mute commands."""
+        # Spotify Connect and AirPlay accept the normal app route. Cast ignores
+        # MB#40 on that route, but applies the same command through the MCU route.
+        return 0x0000 if self.state.source_id == 24 else 0xAAAA
+
     async def async_set_volume(self, level: int) -> None:
         # RID 0x0000 reaches the MCU gain write. RID 0xAAAA may only update
         # the LS-side state without changing audible volume.
@@ -398,7 +404,10 @@ class LitheClient:
         if level > 0:
             self._last_nonzero_volume = level
         if level > 0 and self.state.muted:
-            await self._send(0x02, MB_TRANSPORT, MUTE_OFF)
+            await self._send(
+                0x02, MB_TRANSPORT, MUTE_OFF,
+                remote_id=self._mute_remote_id(),
+            )
             await asyncio.sleep(0.25)
             self.state.muted = False
             self._volume_before_mute = None
@@ -420,16 +429,21 @@ class LitheClient:
         if mute:
             if self.state.volume > 0:
                 self._volume_before_mute = self.state.volume
-            await self._send(0x02, MB_TRANSPORT, MUTE_ON)
+            await self._send(
+                0x02, MB_TRANSPORT, MUTE_ON,
+                remote_id=self._mute_remote_id(),
+            )
             self.state.muted = True
             self._notify()
             return
 
-        # Captured PRO 2 logs prove that the standard 0xAAAA MB#40 UNMUTE
-        # restores Spotify's saved volume and changes the hardware mute state
-        # from 1 to 0. Do not follow it with a zero-volume wake sequence: that
-        # races Spotify and can leave its stored volume at zero.
-        await self._send(0x02, MB_TRANSPORT, MUTE_OFF)
+        # Spotify/AirPlay use RID 0xAAAA; Cast requires the MCU route 0x0000.
+        # Do not follow this with a zero-volume wake sequence: that races
+        # Spotify and can leave its stored volume at zero.
+        await self._send(
+            0x02, MB_TRANSPORT, MUTE_OFF,
+            remote_id=self._mute_remote_id(),
+        )
         restore_volume = self._volume_before_mute or self._last_nonzero_volume
         await asyncio.sleep(0.35)
         self.state.muted = False
