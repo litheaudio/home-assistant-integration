@@ -285,10 +285,23 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         try:
             from .local_favs import get_local_favs
             local_favs = get_local_favs(self.hass)
+            native_by_slot = {
+                int(f.get("slot", 0)): f
+                for f in (self._client.state.favourites or [])
+                if f.get("slot")
+            }
             if local_favs:
                 for fav in local_favs.list_all():
-                    if fav.get("url"):  # only show populated slots
-                        label = f"♥ Favourite {fav['slot']}: {fav.get('name') or fav['url']}"
+                    slot = int(fav["slot"])
+                    native = native_by_slot.get(slot)
+                    if fav.get("url") or native:
+                        default_name = (
+                            native.get("name") if native else fav.get("url")
+                        )
+                        name = fav.get("name")
+                        if not name or name == "(empty)":
+                            name = default_name
+                        label = f"♥ Favourite {slot}: {name}"
                         base.append(label)
         except Exception:
             pass
@@ -415,12 +428,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # Build a merged favourites list combining HA-side and speaker-side.
         # HA-side wins for any slot conflicts since it covers more sources.
         merged_favs: list[dict[str, Any]] = []
+        name_overrides: dict[int, str] = {}
         try:
             from .local_favs import get_local_favs
             mgr = get_local_favs(self.hass)
             if mgr:
                 # list_all returns 9 entries (filled + empty placeholders)
                 for f in mgr.list_all():
+                    if f.get("name") and f["name"] != "(empty)":
+                        name_overrides[int(f["slot"])] = str(f["name"])
                     if f.get("url"):  # only show populated slots
                         merged_favs.append({
                             "slot":   f["slot"],
@@ -437,7 +453,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             if slot and slot not in ha_slots:
                 merged_favs.append({
                     "slot":   slot,
-                    "name":   f.get("name", f"Favourite {slot}"),
+                    "name":   name_overrides.get(
+                        int(slot), f.get("name", f"Favourite {slot}")
+                    ),
                     "url":    "",
                     "source": "firmware",
                 })
@@ -1174,13 +1192,19 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         children: list[BrowseMedia] = []
 
         # 1a) HA-side favourites (saved by Heart button or fav_save service)
+        local_slots: set[int] = set()
+        name_overrides: dict[int, str] = {}
         try:
             from .local_favs import get_local_favs
             local_favs_mgr = get_local_favs(self.hass)
             if local_favs_mgr:
                 for fav in local_favs_mgr.list_all():
+                    slot = int(fav["slot"])
+                    if fav.get("name") and fav["name"] != "(empty)":
+                        name_overrides[slot] = str(fav["name"])
                     if not fav.get("url"):
                         continue  # skip empty slots
+                    local_slots.add(slot)
                     children.append(BrowseMedia(
                         title=f"❤ {fav['name']}",
                         media_class=MediaClass.MUSIC,
@@ -1194,10 +1218,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
         # 1b) Firmware favourites (Spotify/AirPlay saved on speaker)
         for fav in self._client.state.favourites:
+            slot = int(fav.get("slot", 0) or 0)
+            if slot in local_slots:
+                continue
             children.append(BrowseMedia(
-                title=fav.get("name", f"Favourite {fav.get('slot')}"),
+                title=name_overrides.get(
+                    slot, fav.get("name", f"Favourite {slot}")
+                ),
                 media_class=MediaClass.MUSIC,
-                media_content_id=f"{_FAV_PREFIX}{fav.get('slot')}",
+                media_content_id=f"{_FAV_PREFIX}{slot}",
                 media_content_type=MediaType.MUSIC,
                 can_play=True,
                 can_expand=False,

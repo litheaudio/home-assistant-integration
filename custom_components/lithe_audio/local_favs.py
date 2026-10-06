@@ -86,6 +86,22 @@ class LitheLocalFavourites:
         await self.async_save()
         _LOGGER.info("Saved local favourite slot %d: %r → %s", slot, name, url)
 
+    async def async_rename(self, slot: int, name: str) -> None:
+        """Set an HA display name while preserving any saved URL.
+
+        A name-only entry also acts as an alias for a native MB#70 favourite
+        in the same slot; playback still falls through to the speaker.
+        """
+        slot = max(1, min(MAX_SLOTS, int(slot)))
+        existing = self._slots.get(slot, {})
+        self._slots[slot] = {
+            "slot": slot,
+            "name": name.strip() or f"Favourite {slot}",
+            "url": str(existing.get("url", "")),
+        }
+        await self.async_save()
+        _LOGGER.info("Renamed favourite slot %d to %r", slot, name)
+
     async def async_delete(self, slot: int) -> None:
         self._slots.pop(int(slot), None)
         await self.async_save()

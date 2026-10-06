@@ -82,6 +82,9 @@ async def async_get_config_entry_diagnostics(
             "artist":            s.artist,
             "album":             s.album,
             "duration_ms":       s.duration_ms,
+            # DSP / model-specific controls
+            "dsp_highpass":      s.dsp_highpass,
+            "dsp_tuning":        s.dsp_tuning,
         }
         fav_count = len(s.favourites)
 

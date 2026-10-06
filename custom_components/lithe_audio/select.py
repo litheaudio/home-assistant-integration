@@ -10,7 +10,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
-    DSP_EQ, DSP_OUTPUT, EQ_PRESETS, OUT_OPTIONS, caps,
+    DSP_EQ, DSP_HIGHPASS, DSP_OUTPUT, DSP_TUNING,
+    EQ_PRESETS, HP_OPTIONS, OUT_OPTIONS, TUNING_OPTIONS, caps,
 )
 from .coordinator import LitheAudioCoordinator
 
@@ -29,6 +30,10 @@ async def async_setup_entry(
         entities.append(LitheEqSelect(coordinator, entry))
     if c["output_select"]:
         entities.append(LitheOutputSelect(coordinator, entry))
+    if c["highpass_select"]:
+        entities.append(LitheHighPassSelect(coordinator, entry))
+    if c["tuning_select"]:
+        entities.append(LitheTuningSelect(coordinator, entry))
 
     # Cast Group selector — every speaker gets one. The dropdown lists
     # Cast groups discovered live from HA's Cast integration. Picking
@@ -125,6 +130,68 @@ class LitheOutputSelect(_LitheBaseSelect):
         self._current = option
         self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_OUTPUT, idx)
+        self.async_write_ha_state()
+
+
+class LitheHighPassSelect(_LitheBaseSelect):
+    """PRO 2 high-pass filter selector."""
+
+    _attr_name = "Audio — High Pass Filter"
+    _attr_options = HP_OPTIONS
+    _attr_icon = "mdi:filter"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_highpass"
+        self._current = HP_OPTIONS[0]
+        self._optimistic_until: float = 0.0
+
+    @property
+    def current_option(self) -> str:
+        import time
+        if time.monotonic() >= self._optimistic_until:
+            value = getattr(self._client.state, "dsp_highpass", None)
+            if isinstance(value, int) and 0 <= value < len(HP_OPTIONS):
+                return HP_OPTIONS[value]
+        return self._current
+
+    async def async_select_option(self, option: str) -> None:
+        import time
+        idx = HP_OPTIONS.index(option) if option in HP_OPTIONS else 0
+        self._current = HP_OPTIONS[idx]
+        self._optimistic_until = time.monotonic() + 5.0
+        await self._client.async_dsp_command(DSP_HIGHPASS, idx)
+        self.async_write_ha_state()
+
+
+class LitheTuningSelect(_LitheBaseSelect):
+    """PRO 2 enclosure tuning selector."""
+
+    _attr_name = "Audio — Speaker Tuning"
+    _attr_options = TUNING_OPTIONS
+    _attr_icon = "mdi:tune-variant"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_tuning"
+        self._current = TUNING_OPTIONS[0]
+        self._optimistic_until: float = 0.0
+
+    @property
+    def current_option(self) -> str:
+        import time
+        if time.monotonic() >= self._optimistic_until:
+            value = getattr(self._client.state, "dsp_tuning", None)
+            if isinstance(value, int) and 0 <= value < len(TUNING_OPTIONS):
+                return TUNING_OPTIONS[value]
+        return self._current
+
+    async def async_select_option(self, option: str) -> None:
+        import time
+        idx = TUNING_OPTIONS.index(option) if option in TUNING_OPTIONS else 0
+        self._current = TUNING_OPTIONS[idx]
+        self._optimistic_until = time.monotonic() + 5.0
+        await self._client.async_dsp_command(DSP_TUNING, idx)
         self.async_write_ha_state()
 
 

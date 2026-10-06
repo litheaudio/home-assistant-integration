@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.28] — 2026-10-06
+
+### Added
+
+- Restore the WiFi PRO 2 high-pass filter selector with Off, 60 Hz, 80 Hz,
+  100 Hz, and 120 Hz options using the MCU-bound MB#112 `0x1A` command.
+- Restore the WiFi PRO 2 speaker tuning selector with Enclosure Mode 13L and
+  Open Back Mode using the MCU-bound MB#112 `0x1D` command.
+- Add editable Home Assistant text entities for favourite slots 1-9. Names
+  apply to both HA-stored URLs and native MB#70 favourites.
+
+### Fixed
+
+- Obtain LS10/PRO 2 signal strength from read-only Cast diagnostics when LUCI
+  MB#151 is unavailable, as documented for LS10/11.
+- Derive Wi-Fi band from reported frequency or channel and only expose real
+  `2.4 GHz`, `5 GHz`, or `6 GHz` values instead of the generic `Wi-Fi` label.
+- Apply favourite name overrides consistently in Browse Media, media-player
+  attributes, and the source selector.
+
 ## [1.4.27] — 2026-10-06
 
 ### Added

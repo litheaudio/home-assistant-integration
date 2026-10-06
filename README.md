@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.27** — Detects the speaker model through LUCI MB#208 and LSSDP, exposes the reported identifiers in Home Assistant, and selects the matching capability profile when the model is unambiguous.
+**Latest: 1.4.28** — Restores PRO 2 high-pass and enclosure tuning controls, adds LS10 Wi-Fi telemetry fallback, and provides editable names for all nine favourite slots.
 
 ---
 

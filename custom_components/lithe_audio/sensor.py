@@ -136,7 +136,8 @@ class LitheWifiBandSensor(_LitheBaseSensor):
 
     @property
     def native_value(self) -> str:
-        return self._client.state.wifi_band or "Unknown"
+        value = self._client.state.wifi_band.strip()
+        return value if value in {"2.4 GHz", "5 GHz", "6 GHz"} else "Unknown"
 
 
 class LitheTimezoneSensor(_LitheBaseSensor):

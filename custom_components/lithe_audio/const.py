@@ -186,6 +186,10 @@ DSP_LOUDNESS  = 0x0B   # 0=OFF, 1=ON
 DSP_NIGHTMODE = 0x0C   # 0=OFF, 1=ON
 DSP_BALANCE   = 0x0E   # signed -6..+6
 DSP_OUTPUT    = 0x0F   # 0=Mono, 1=Stereo, 2=Left, 3=Right
+# PRO 2-only controls captured from the Lithe app. These use the same modern
+# six-byte HOSTMCUSETTINGS envelope and MCU RemoteID as the controls above.
+DSP_HIGHPASS  = 0x1A   # 0=Off, 1=60Hz, 2=80Hz, 3=100Hz, 4=120Hz
+DSP_TUNING    = 0x1D   # 0=13L enclosure, 1=open back
 
 DSP_BASS_FIELD   = 0x06
 DSP_MID_FIELD    = 0x04
@@ -193,6 +197,8 @@ DSP_TREBLE_FIELD = 0x02
 
 EQ_PRESETS  = ["Normal", "Acoustic", "Jazz", "Pop", "Hip-Hop"]
 OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]
+HP_OPTIONS = ["Off", "60 Hz", "80 Hz", "100 Hz", "120 Hz"]
+TUNING_OPTIONS = ["Enclosure Mode 13L", "Open Back Mode"]
 
 # ── Per-product chime counts ────────────────────────────────────────────────
 PRODUCT_CHIMES = {
@@ -217,6 +223,8 @@ PRODUCT_CHIMES = {
 #   chimes           — number of chime slots (0 = no chime buttons)
 #   eq_select        — EQ preset selector
 #   output_select    — Stereo/Mono/Left/Right selector
+#   highpass_select  — PRO 2 high-pass filter selector
+#   tuning_select    — PRO 2 enclosure/open-back selector
 #   balance_number   — -6..+6 balance slider
 #   loudness_switch  — on/off loudness
 #   nightmode_switch — Night Mode on/off
@@ -226,6 +234,8 @@ PRODUCT_CAPS = {
         "chimes":           15,
         "eq_select":        True,
         "output_select":    True,
+        "highpass_select":  True,
+        "tuning_select":    True,
         "balance_number":   True,
         "loudness_switch":  True,
         "nightmode_switch": True,
@@ -237,6 +247,8 @@ PRODUCT_CAPS = {
         "chimes":           6,
         "eq_select":        True,
         "output_select":    True,
+        "highpass_select":  False,
+        "tuning_select":    False,
         "balance_number":   True,
         "loudness_switch":  True,
         "nightmode_switch": True,
@@ -248,6 +260,8 @@ PRODUCT_CAPS = {
         "chimes":           10,
         "eq_select":        True,
         "output_select":    True,
+        "highpass_select":  False,
+        "tuning_select":    False,
         "balance_number":   True,
         "loudness_switch":  True,
         "nightmode_switch": True,
@@ -259,6 +273,8 @@ PRODUCT_CAPS = {
         "chimes":           0,
         "eq_select":        True,
         "output_select":    True,
+        "highpass_select":  False,
+        "tuning_select":    False,
         "balance_number":   True,
         "loudness_switch":  True,
         "nightmode_switch": True,
@@ -270,6 +286,8 @@ PRODUCT_CAPS = {
         "chimes":           6,
         "eq_select":        True,
         "output_select":    True,
+        "highpass_select":  False,
+        "tuning_select":    False,
         "balance_number":   True,
         "loudness_switch":  True,
         "nightmode_switch": True,
@@ -281,6 +299,8 @@ PRODUCT_CAPS = {
         "chimes":           0,
         "eq_select":        False,
         "output_select":    False,
+        "highpass_select":  False,
+        "tuning_select":    False,
         "balance_number":   False,
         "loudness_switch":  False,
         "nightmode_switch": False,
@@ -297,6 +317,8 @@ def caps(product: str) -> dict:
         "chimes":           0,
         "eq_select":        False,
         "output_select":    False,
+        "highpass_select":  False,
+        "tuning_select":    False,
         "balance_number":   False,
         "loudness_switch":  False,
         "nightmode_switch": False,

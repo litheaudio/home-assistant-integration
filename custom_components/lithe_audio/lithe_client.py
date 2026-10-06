@@ -100,6 +100,8 @@ class SpeakerState:
     dsp_nightmode: int | None = None  # 0x0C: 0=OFF 1=ON
     dsp_balance:   int | None = None  # 0x0E: signed -6..+6
     dsp_output:    int | None = None  # 0x0F: 0=Mono 1=Stereo 2=Left 3=Right
+    dsp_highpass:  int | None = None  # 0x1A: Off/60/80/100/120 Hz
+    dsp_tuning:    int | None = None  # 0x1D: 13L enclosure/open back
 
     # Player role (per API_NEW page 25): "Free" / "Master" / "Slave"
     # Slave devices cannot trigger chimes — they must be sent to the master.
@@ -178,6 +180,7 @@ class LitheClient:
         self._pending_nv_future: asyncio.Future[str] | None = None
         self._nv_read_lock = asyncio.Lock()
         self._nv_model_probe_complete: bool = False
+        self._next_cast_wifi_probe: float = 0.0
         # Counter of consecutive resync events — triggers reconnect at 10
         self._resync_count: int = 0
 
@@ -363,6 +366,12 @@ class LitheClient:
                 await self.async_read_nv(item)
             self._nv_model_probe_complete = True
         await self.async_read_nv("ssid")
+
+        # LUCI v15.0.7 explicitly marks MB#151 unsupported on LS10/11.
+        # Cast diagnostics provide RSSI and, on newer builds, the connected
+        # frequency/channel used to derive the actual Wi-Fi band.
+        if self.use_tls:
+            await self._refresh_cast_wifi_state()
 
         # The HTTP page is the confirmed source of Bluetooth service state.
         await self._refresh_bluetooth_http_state()
@@ -794,6 +803,110 @@ class LitheClient:
         self.state.bt_status = "Bluetooth_ON" if enabled else "Bluetooth_OFF"
         if changed:
             self._notify()
+
+    @staticmethod
+    def _wifi_band_from_value(value, *, channel: bool = False) -> str | None:
+        """Normalize a Cast frequency, channel, or band label."""
+        text = str(value).strip().lower().replace(" ", "")
+        if not text:
+            return None
+        if "2.4" in text or text in {"2g", "2ghz", "24g", "24ghz"}:
+            return "2.4 GHz"
+        if text in {"5g", "5ghz"}:
+            return "5 GHz"
+        if text in {"6g", "6ghz"}:
+            return "6 GHz"
+        try:
+            number = float(re.sub(r"[^0-9.]", "", text))
+        except ValueError:
+            return None
+        if channel:
+            if 1 <= number <= 14:
+                return "2.4 GHz"
+            if 32 <= number <= 177:
+                return "5 GHz"
+            return None
+        if 2.3 <= number <= 2.6 or 2300 <= number <= 2600:
+            return "2.4 GHz"
+        if 4.9 <= number <= 5.9 or 4900 <= number <= 5900:
+            return "5 GHz"
+        if 5.925 <= number <= 7.125 or 5925 <= number <= 7125:
+            return "6 GHz"
+        return None
+
+    def _apply_cast_wifi_info(self, data: dict) -> bool:
+        """Apply Wi-Fi telemetry from a Cast eureka_info response."""
+        flattened: list[tuple[str, object]] = []
+
+        def _walk(value) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    flattened.append((str(key).lower(), child))
+                    _walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    _walk(child)
+
+        _walk(data)
+        changed = False
+
+        for key, value in flattened:
+            if key not in {"signal_level", "signallevel", "rssi", "wifi_rssi"}:
+                continue
+            try:
+                signal = int(float(value))
+            except (TypeError, ValueError):
+                continue
+            if -127 <= signal < 0:
+                if self.state.wifi_rssi_dbm != signal:
+                    changed = True
+                self.state.wifi_rssi_dbm = signal
+                self.state.wifi_rssi_source = "Cast eureka_info"
+                break
+
+        band = None
+        for key, value in flattened:
+            if key in {"wifi_band", "wifiband", "band"}:
+                band = self._wifi_band_from_value(value)
+            elif key in {"wifi_frequency", "frequency", "freq", "frequency_mhz"}:
+                band = self._wifi_band_from_value(value)
+            elif key in {"wifi_channel", "channel"}:
+                band = self._wifi_band_from_value(value, channel=True)
+            if band:
+                break
+        if band:
+            if self.state.wifi_band != band:
+                changed = True
+            self.state.wifi_band = band
+
+        if not self.state.ssid:
+            for key, value in flattened:
+                if key == "ssid" and isinstance(value, str) and value.strip():
+                    self.state.ssid = value.strip()
+                    changed = True
+                    break
+        return changed
+
+    async def _refresh_cast_wifi_state(self) -> None:
+        """Use read-only Cast diagnostics when LS10 omits MB#151."""
+        now = time.monotonic()
+        if now < self._next_cast_wifi_probe:
+            return
+        try:
+            timeout = aiohttp.ClientTimeout(total=2)
+            url = f"http://{self.host}:8008/setup/eureka_info?options=detail"
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        self._next_cast_wifi_probe = now + 300.0
+                        return
+                    data = await response.json(content_type=None)
+            self._next_cast_wifi_probe = now + 25.0
+            if isinstance(data, dict) and self._apply_cast_wifi_info(data):
+                self._notify()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError):
+            self._next_cast_wifi_probe = now + 300.0
+            _LOGGER.debug("Cast Wi-Fi diagnostics unavailable for %s", self.host)
 
     async def async_reboot(self) -> None:
         """Request speaker reboot.
@@ -1234,7 +1347,6 @@ class LitheClient:
                 # Wifi MAC takes precedence over Ethernet
                 if iface_lower.startswith("wlan") or iface_lower == "wifi":
                     self.state.mac = mac
-                    self.state.wifi_band = self.state.wifi_band or "Wi-Fi"
                 elif iface_lower.startswith("eth"):
                     # Only set MAC if we haven't seen a wifi MAC yet
                     if not self.state.mac or self.state.mac.startswith("Eth"):
@@ -1320,8 +1432,8 @@ class LitheClient:
             try:
                 from .const import (
                     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS,
-                    DSP_LOUDNESS, DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT,
-                    DSP_TREBLE_FIELD,
+                    DSP_HIGHPASS, DSP_LOUDNESS, DSP_MID_FIELD, DSP_NIGHTMODE,
+                    DSP_OUTPUT, DSP_TREBLE_FIELD, DSP_TUNING,
                 )
 
                 def _signed_8(b: int) -> int:
@@ -1337,6 +1449,8 @@ class LitheClient:
                     DSP_NIGHTMODE: ("dsp_nightmode", _unsigned),
                     DSP_BALANCE:   ("dsp_balance",   _signed_8),
                     DSP_OUTPUT:    ("dsp_output",    _unsigned),
+                    DSP_HIGHPASS:  ("dsp_highpass",  _unsigned),
+                    DSP_TUNING:    ("dsp_tuning",    _unsigned),
                 }
                 _DSP_FIELD_MAP: dict[tuple[int, int], tuple[str, callable]] = {
                     (DSP_EQ_BANDS, DSP_BASS_FIELD):   ("dsp_bass", _signed_8),
@@ -1718,6 +1832,10 @@ class LitheClient:
             attr = attr_map.get(_norm(key))
             if attr and val:
                 cleaned = str(val).strip()
+                if attr == "wifi_band":
+                    cleaned = self._wifi_band_from_value(cleaned) or ""
+                    if not cleaned:
+                        return
                 setattr(self.state, attr, cleaned)
                 if attr in {"model", "model_number", "model_variant"}:
                     detected = product_from_model(
