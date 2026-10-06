@@ -34,6 +34,12 @@ from .const import (
     PRODUCT_NAMES, PRODUCT_SOURCES, SOURCES,
 )
 from .coordinator import LitheAudioCoordinator
+from .media_delegate import (
+    MUSIC_ASSISTANT_CONTENT_PREFIX,
+    choose_music_assistant_entity,
+    decode_music_assistant_content,
+    encode_music_assistant_content,
+)
 from .spotify_bridge import (
     SPOTIFY_CONTENT_PREFIX,
     SPOTIFY_LIBRARY_ITEMS,
@@ -752,6 +758,33 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             )
             return
 
+        # Music Assistant library item. Browsing is delegated to the matching
+        # MA player entity and playback must be delegated too so MA can resolve
+        # library/provider URIs and stream them to this physical speaker.
+        if media_id.startswith(MUSIC_ASSISTANT_CONTENT_PREFIX):
+            try:
+                ma_entity_id, ma_content_id = decode_music_assistant_content(
+                    media_id
+                )
+            except ValueError as err:
+                _LOGGER.warning("Invalid Music Assistant browse item: %s", err)
+                return
+            if ma_content_id is None:
+                return
+            await self.hass.services.async_call(
+                MEDIA_PLAYER_DOMAIN,
+                "play_media",
+                {
+                    "entity_id": ma_entity_id,
+                    "media_content_type": media_type,
+                    "media_content_id": ma_content_id,
+                    **kwargs,
+                },
+                blocking=True,
+                context=self._context,
+            )
+            return
+
         # Favourite by content_id (no announce flow — favourites resume
         # the speaker's own playback engine)
         if media_id.startswith(_FAV_PREFIX):
@@ -1098,6 +1131,22 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 ) from err
             return self._wrap_spotify_browse(result, spotify_entity_id)
 
+        # Delegate wrapped Music Assistant folders to the matching MA player.
+        if (
+            media_content_id
+            and media_content_id.startswith(MUSIC_ASSISTANT_CONTENT_PREFIX)
+        ):
+            try:
+                ma_entity_id, ma_content_id = decode_music_assistant_content(
+                    media_content_id
+                )
+            except ValueError as err:
+                raise BrowseError(str(err)) from err
+            result = await self._async_browse_media_player(
+                ma_entity_id, media_content_type, ma_content_id
+            )
+            return self._wrap_music_assistant_browse(result, ma_entity_id)
+
         # Direct URL folder — expand it to see Adhan/Quran/custom presets
         if media_content_id == "lithe_direct_url":
             return self._build_direct_url_folder()
@@ -1118,8 +1167,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         if media_content_id and media_content_id.startswith("media-source://"):
             return await media_source.async_browse_media(
                 self.hass, media_content_id,
-                content_filter=lambda item: item.media_content_type.startswith("audio/")
-                                            or item.media_content_type in _PLAYABLE_TYPES,
+                content_filter=self._audio_browse_filter,
             )
 
         # Build root: favourites + media sources
@@ -1222,19 +1270,37 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 ),
             ))
 
-        # 5) HA media sources (Radio Browser, My Media, TTS, etc.)
-        # Filter out non-audio sources (Image, Image upload, AI generated
-        # images, Camera) per user request — these aren't useful on an
-        # audio-only speaker.
+        # 5) Music Assistant library. Inline its root folders so Artists,
+        # Albums, Tracks, Playlists, Radio stations, Podcasts and Audiobooks
+        # appear directly alongside the standard Home Assistant media sources.
+        ma_entity_id = self._music_assistant_entity_id()
+        if ma_entity_id:
+            try:
+                ma_root = await self._async_browse_media_player(
+                    ma_entity_id, None, None
+                )
+                for item in ma_root.children or []:
+                    children.append(
+                        self._wrap_music_assistant_browse(item, ma_entity_id)
+                    )
+            except Exception as err:
+                _LOGGER.warning(
+                    "Failed to browse Music Assistant through %s: %s",
+                    ma_entity_id,
+                    err,
+                )
+
+        # 6) HA media sources (Radio Browser, My Media, TTS, etc.)
+        # Filter out image-only sources. Camera is retained because some
+        # camera streams carry an audio track the speaker can consume.
         _EXCLUDED_SOURCES = {
             "image", "image_upload", "ai_task", "ai_generated_images",
-            "ai_image", "camera",
+            "ai_image",
         }
         try:
             ms_root = await media_source.async_browse_media(
                 self.hass, None,
-                content_filter=lambda item: item.media_content_type.startswith("audio/")
-                                            or item.media_content_type in _PLAYABLE_TYPES,
+                content_filter=self._audio_browse_filter,
             )
             if ms_root and ms_root.children:
                 for c in ms_root.children:
@@ -1251,7 +1317,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                     # Also skip by title — some sources use display names
                     title_lower = (c.title or "").lower()
                     if any(bad in title_lower for bad in (
-                        "image", "camera", "ai generated", "ai task", "upload",
+                        "image", "ai generated", "ai task", "upload",
                     )):
                         skip = True
                     if skip:
@@ -1280,6 +1346,64 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             children=children,
             children_media_class=MediaClass.MUSIC,
         )
+
+    @staticmethod
+    def _audio_browse_filter(item: BrowseMedia) -> bool:
+        """Keep navigable folders plus audio items from HA media sources."""
+        media_type = str(item.media_content_type or "")
+        return bool(item.can_expand) or (
+            media_type.startswith(("audio/", "video/"))
+            or media_type in _PLAYABLE_TYPES
+            or media_type == "camera"
+        )
+
+    async def _async_browse_media_player(
+        self,
+        entity_id: str,
+        media_content_type: str | None,
+        media_content_id: str | None,
+    ) -> BrowseMedia:
+        """Browse another loaded media player using HA's entity component."""
+        component = self.hass.data.get(MEDIA_PLAYER_DOMAIN)
+        entity = component.get_entity(entity_id) if component else None
+        if entity is None:
+            raise BrowseError(f"Media player {entity_id} is not loaded")
+        return await entity.async_browse_media(
+            media_content_type, media_content_id
+        )
+
+    def _music_assistant_entity_id(self) -> str | None:
+        """Find the Music Assistant duplicate for this physical speaker."""
+        registry = er.async_get(self.hass)
+        entities: list[tuple[str, str]] = []
+        for entry in registry.entities.values():
+            if (
+                entry.domain != MEDIA_PLAYER_DOMAIN
+                or entry.platform != "music_assistant"
+                or entry.disabled_by is not None
+            ):
+                continue
+            state = self.hass.states.get(entry.entity_id)
+            if state is not None:
+                entities.append((entry.entity_id, state.name))
+
+        entry_title = self._entry.title.rsplit(" (", 1)[0]
+        return choose_music_assistant_entity(
+            entities,
+            (self._client.state.name or "", entry_title, self.name or ""),
+        )
+
+    def _wrap_music_assistant_browse(
+        self, item: BrowseMedia, ma_entity_id: str
+    ) -> BrowseMedia:
+        """Route every returned Music Assistant item back through Lithe."""
+        item.media_content_id = encode_music_assistant_content(
+            ma_entity_id, item.media_content_id
+        )
+        if item.children:
+            for child in item.children:
+                self._wrap_music_assistant_browse(child, ma_entity_id)
+        return item
 
     def _spotify_entity_ids(self) -> list[str]:
         """Return enabled, loaded official Spotify media players."""

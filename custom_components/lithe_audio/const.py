@@ -31,6 +31,33 @@ PRODUCT_NAMES = {
     PRODUCT_MICRO: "Micro Subwoofer",
 }
 
+
+def product_from_model(*values: str) -> str | None:
+    """Map speaker-reported model fields to a known integration product.
+
+    Model can contain only the platform generation (for example ``WiFi v3``),
+    while ModelVariant or Model_num identifies the actual retail product.  The
+    specific identifiers are therefore checked before the generic generation.
+    """
+    normalized = "".join(
+        ch for value in values for ch in str(value).upper() if ch.isalnum()
+    )
+    if not normalized:
+        return None
+    if "PRO2" in normalized or "WIFIPRO2" in normalized:
+        return PRODUCT_PRO2
+    if "IO1" in normalized:
+        return PRODUCT_IO1
+    if "MICRO" in normalized:
+        return PRODUCT_MICRO
+    if "WIFIV3" in normalized or normalized.endswith("V3"):
+        return PRODUCT_V3
+    if "WIFIV2" in normalized or normalized.endswith("V2"):
+        return PRODUCT_V2
+    if "WIFIPRO" in normalized or normalized.endswith("PRO"):
+        return PRODUCT_PRO
+    return None
+
 # LS10 = TLS 1.2, LS9 = plain TCP
 LS10_PRODUCTS = {PRODUCT_PRO2, PRODUCT_V3, PRODUCT_IO1}
 LS9_PRODUCTS  = {PRODUCT_V2, PRODUCT_PRO, PRODUCT_MICRO}

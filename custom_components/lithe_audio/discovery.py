@@ -77,8 +77,16 @@ def _parse_response(data: bytes, src_host: str) -> DiscoveredDevice | None:
         or headers.get("DEVICE_ID")
         or ""
     )
-    model = headers.get("MODEL") or headers.get("ST") or ""
-    speaker_type = headers.get("SPEAKER_TYPE", "")
+    # Current LS10 discovery advertises CAST_MODEL rather than MODEL.
+    model = (
+        headers.get("MODEL")
+        or headers.get("CAST_MODEL")
+        or headers.get("ST")
+        or ""
+    )
+    speaker_type = (
+        headers.get("SPEAKER_TYPE") or headers.get("SPEAKERTYPE") or ""
+    )
 
     # Determine platform
     source_list = headers.get("SOURCE_LIST", "")

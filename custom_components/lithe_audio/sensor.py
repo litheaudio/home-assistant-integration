@@ -23,6 +23,7 @@ async def async_setup_entry(
     coordinator: LitheAudioCoordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
     async_add_entities([
         LitheSourceSensor(coordinator, entry),
+        LitheModelSensor(coordinator, entry),
         LitheFirmwareSensor(coordinator, entry),
         LitheMacSensor(coordinator, entry),
         LitheWifiBandSensor(coordinator, entry),
@@ -84,6 +85,32 @@ class LitheFirmwareSensor(_LitheBaseSensor):
     @property
     def native_value(self) -> str:
         return self._client.state.firmware or "Unknown"
+
+
+class LitheModelSensor(_LitheBaseSensor):
+    """Hardware model reported through MB#208 READ_Model."""
+    _attr_name = "Model"
+    _attr_icon = "mdi:speaker"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_model"
+
+    @property
+    def native_value(self) -> str:
+        return (
+            self._client.state.model
+            or PRODUCT_NAMES.get(self._entry.data.get(CONF_PRODUCT, ""), "Unknown")
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        state = self._client.state
+        return {
+            "detected_product": state.detected_product or "Unknown",
+            "model_number": state.model_number or "Unknown",
+            "model_variant": state.model_variant or "Unknown",
+        }
 
 
 class LitheMacSensor(_LitheBaseSensor):

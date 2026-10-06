@@ -2,6 +2,55 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.27] — 2026-10-06
+
+### Added
+
+- Read the `Model`, `Model_num`, and `ModelVariant` non-volatile values through
+  LUCI MB#208 during startup.
+- Expose the speaker-reported hardware model as a diagnostic sensor and include
+  all model identifiers in integration diagnostics.
+- Parse the modern LSSDP `CAST_MODEL` and `SPEAKERTYPE` discovery headers.
+- Select the matching model capability profile when `Model_num` or
+  `ModelVariant` identifies a known speaker without changing transport
+  families; a generic platform label cannot overwrite a manual selection.
+
+### Fixed
+
+- Serialize MB#208 reads and correlate keyed responses so an unsolicited
+  `Model:...` push cannot be mistaken for an SSID response.
+- Prefer a specific `ModelVariant` such as PRO2 or iO1 over the generic
+  `WiFi v3` platform identifier.
+
+## [1.4.26] — 2026-10-06
+
+### Added
+
+- Show the matching Music Assistant player's Artists, Albums, Tracks,
+  Playlists, Radio stations, Podcasts, and Audiobooks directly in the Lithe
+  Browse Media root.
+- Delegate Music Assistant folder navigation and selected-item playback back
+  to its loaded media-player entity, preserving provider and library URIs.
+
+### Fixed
+
+- Keep expandable Home Assistant media-source folders during audio filtering;
+  previously valid directory categories could disappear before users could
+  browse their playable children.
+- Restore Camera to the media root and retain camera/video streams that may
+  contain a speaker-compatible audio track.
+
+## [1.4.25] — 2026-10-06
+
+### Fixed
+
+- Serialize Bluetooth ON/OFF requests so rapid Home Assistant actions cannot
+  race each other.
+- Verify the confirmed `SetBluetoothmode` HTTP service flag after each change
+  and retry once when the speaker still reports its previous value.
+- Stop treating delayed MB210 `BT:READY` packets as authoritative radio state.
+- Remove the immediate MB210 GET that could reverse a successful HTTP OFF.
+
 ## [1.4.24] — 2026-10-02
 
 ### Fixed

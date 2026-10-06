@@ -17,7 +17,8 @@ from .const import (
     CONF_PORT, CONF_PRODUCT, CONF_USE_TLS, DATA_COORDINATOR, DOMAIN,
     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS, DSP_LOUDNESS,
     DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT, DSP_TREBLE_FIELD,
-    EQ_PRESETS, LS9_PRODUCTS, OUT_OPTIONS, PRODUCT_CHIMES,
+    EQ_PRESETS, LS9_PRODUCTS, OUT_OPTIONS, PRODUCT_CHIMES, PRODUCT_NAMES,
+    product_from_model,
 )
 from .coordinator import LitheAudioCoordinator
 from .lithe_client import LitheClient, LitheClientLS9
@@ -211,6 +212,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = LitheAudioCoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
+
+    # Model can be only a platform label (for example PRO 2 firmware may report
+    # "WiFi v3"). Only the more specific Model_num/ModelVariant fields may
+    # change the persisted capability profile automatically.
+    capability_product = product_from_model(
+        client.state.model_number,
+        client.state.model_variant,
+    )
+    if capability_product and capability_product != product:
+        same_transport_family = (
+            (product in LS9_PRODUCTS) == (capability_product in LS9_PRODUCTS)
+        )
+        if same_transport_family:
+            _LOGGER.warning(
+                "Speaker %s reports model variant %r / %r (%s); replacing configured "
+                "product %s before capability setup",
+                host,
+                client.state.model_number,
+                client.state.model_variant,
+                PRODUCT_NAMES.get(capability_product, capability_product),
+                PRODUCT_NAMES.get(product, product),
+            )
+            hass.config_entries.async_update_entry(
+                entry,
+                data={**entry.data, CONF_PRODUCT: capability_product},
+            )
+            product = capability_product
+        else:
+            _LOGGER.error(
+                "Speaker %s reports model variant %r but it conflicts with the active "
+                "LUCI transport; keeping configured product %s",
+                host,
+                client.state.model_variant or client.state.model_number,
+                product,
+            )
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         DATA_COORDINATOR: coordinator,

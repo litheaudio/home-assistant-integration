@@ -26,7 +26,7 @@ from .const import (
     CONF_CERT_PATH, CONF_KEY_PATH, CONF_PRODUCT, CONF_USE_TLS,
     DATA_COORDINATOR, DEFAULT_PORT, DOMAIN, LS10_PRODUCTS, LS9_PRODUCTS,
     PRODUCT_IO1, PRODUCT_MICRO, PRODUCT_NAMES,
-    PRODUCT_PRO, PRODUCT_PRO2, PRODUCT_V2, PRODUCT_V3,
+    PRODUCT_PRO, PRODUCT_PRO2, PRODUCT_V2, PRODUCT_V3, product_from_model,
     ADHAN_PRESETS, QURAN_JUZ, caps, quran_juz_label, all_preset_options,
 )
 from .discovery import DiscoveredDevice, async_discover
@@ -59,19 +59,8 @@ PRODUCT_OPTIONS = {k: v for k, v in PRODUCT_NAMES.items()}
 
 def _guess_product(dev: DiscoveredDevice) -> str:
     """Map an LSSDP-discovered model string to one of our product IDs."""
-    m = (dev.model or "").upper()
-    if "PRO2" in m or "PRO 2" in m:
-        return PRODUCT_PRO2
-    if "V3" in m:
-        return PRODUCT_V3
-    if "IO1" in m:
-        return PRODUCT_IO1
-    if "MICRO" in m:
-        return PRODUCT_MICRO
-    if "V2" in m:
-        return PRODUCT_V2
-    if "PRO" in m:
-        return PRODUCT_PRO
+    if product := product_from_model(dev.model or dev.speaker_type):
+        return product
     # Fall back on platform classification from LSSDP headers
     return PRODUCT_PRO2 if dev.platform == "LS10" else PRODUCT_V2
 

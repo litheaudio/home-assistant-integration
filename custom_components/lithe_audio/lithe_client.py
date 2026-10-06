@@ -25,6 +25,7 @@ from .const import (
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
     DSP_REMOTE_ID,
+    product_from_model,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +37,9 @@ class SpeakerState:
     name: str = ""
     firmware: str = ""
     model: str = ""
+    detected_product: str = ""
+    model_number: str = ""
+    model_variant: str = ""
     mac: str = ""
     wifi_band: str = ""
     timezone: str = ""
@@ -151,6 +155,13 @@ class LitheClient:
         # Incremented only by valid MB#63 MUTE/UNMUTE feedback. Command code
         # uses this to distinguish a real state transition from local state.
         self._mute_feedback_revision: int = 0
+        # Bluetooth ON/OFF is controlled by an HTTP endpoint. Serialize those
+        # requests and retain the requested state briefly so delayed MB#210
+        # packets cannot undo a freshly verified web setting.
+        self._bluetooth_lock = asyncio.Lock()
+        self._bluetooth_target: bool | None = None
+        self._bluetooth_target_until: float = 0.0
+        self._bluetooth_http_state_known: bool = False
         # Match the working Control4 driver: serialize all LUCI writes and
         # leave 100 ms between packets.
         self._send_lock = asyncio.Lock()
@@ -164,6 +175,9 @@ class LitheClient:
         self._seen_remote_ids: set[int] = set()
         # NV item being read via MB#208 READ_<item> — cleared on response
         self._pending_nv_read: str | None = None
+        self._pending_nv_future: asyncio.Future[str] | None = None
+        self._nv_read_lock = asyncio.Lock()
+        self._nv_model_probe_complete: bool = False
         # Counter of consecutive resync events — triggers reconnect at 10
         self._resync_count: int = 0
 
@@ -341,20 +355,39 @@ class LitheClient:
         await self._send(0x02, MB_FAVOURITES, "FAV_LIST")
         await asyncio.sleep(0.05)
 
-        # NV read for SSID via MB#208 — Lithe's published NV-read protocol
+        # MB#208 NV reads are serialized because responses contain only the
+        # value, not the requested key. Model selects the product capability
+        # profile; SSID remains diagnostic network state.
+        if not self._nv_model_probe_complete:
+            for item in ("Model", "Model_num", "ModelVariant"):
+                await self.async_read_nv(item)
+            self._nv_model_probe_complete = True
         await self.async_read_nv("ssid")
 
         # The HTTP page is the confirmed source of Bluetooth service state.
         await self._refresh_bluetooth_http_state()
 
-    async def async_read_nv(self, item: str) -> None:
+    async def async_read_nv(self, item: str) -> str | None:
         """Read an NV item via MB#208 SET READ_<item>.
 
         Per LUCI spec §10.23, the speaker responds on the same MB#208 with
         the NV item's value as the payload.
         """
-        self._pending_nv_read = item
-        await self._send(0x02, MB_DEVICE_INFO, f"READ_{item}")
+        async with self._nv_read_lock:
+            loop = asyncio.get_running_loop()
+            future: asyncio.Future[str] = loop.create_future()
+            self._pending_nv_read = item
+            self._pending_nv_future = future
+            try:
+                await self._send(0x02, MB_DEVICE_INFO, f"READ_{item}")
+                return await asyncio.wait_for(future, timeout=1.5)
+            except asyncio.TimeoutError:
+                _LOGGER.debug("NV read %r timed out on %s", item, self.host)
+                return None
+            finally:
+                if self._pending_nv_future is future:
+                    self._pending_nv_read = None
+                    self._pending_nv_future = None
 
     async def _fetch_now_playing_burst(self) -> None:
         """Quickly fetch metadata when playback starts.
@@ -649,38 +682,118 @@ class LitheClient:
             enabled = command == "ON"
             url = f"http://{self.host}/goform/SetBluetoothmode"
             value = "Bluetooth_ON" if enabled else "Bluetooth_OFF"
-            timeout = aiohttp.ClientTimeout(total=5)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, data={"Bluetooth": value}) as response:
-                    body = await response.text()
-                    if response.status >= 400:
-                        raise RuntimeError(
-                            f"Bluetooth HTTP control failed ({response.status}): "
-                            f"{body[:120]}"
+            async with self._bluetooth_lock:
+                self._bluetooth_target = enabled
+                self._bluetooth_target_until = time.monotonic() + 8.0
+                last_observed: bool | None = None
+
+                # The service occasionally acknowledges before the setting is
+                # applied. Poll its web flag and repeat the POST once when the
+                # old value remains visible.
+                for attempt in range(2):
+                    timeout = aiohttp.ClientTimeout(total=5)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.post(
+                            url, data={"Bluetooth": value}
+                        ) as response:
+                            body = await response.text()
+                            if response.status >= 400:
+                                raise RuntimeError(
+                                    "Bluetooth HTTP control failed "
+                                    f"({response.status}): {body[:120]}"
+                                )
+
+                    # Show the requested state immediately, but verify it
+                    # before declaring the operation complete.
+                    self.state.bt_enabled = enabled
+                    self.state.bt_status = value
+                    self._notify()
+
+                    for delay in (0.25, 0.5, 0.9):
+                        await asyncio.sleep(delay)
+                        observed = await self._read_bluetooth_http_state()
+                        if observed is None:
+                            continue
+                        last_observed = observed
+                        if observed == enabled:
+                            self._bluetooth_http_state_known = True
+                            self.state.bt_enabled = observed
+                            self.state.bt_status = value
+                            self._bluetooth_target_until = time.monotonic() + 2.0
+                            self._notify()
+                            return
+
+                    if attempt == 0 and last_observed != enabled:
+                        _LOGGER.warning(
+                            "Bluetooth %s not visible on %s yet; retrying HTTP control",
+                            command,
+                            self.host,
                         )
-            self.state.bt_enabled = enabled
-            self.state.bt_status = value
-            self._notify()
-            return
+
+                if last_observed is not None:
+                    self._bluetooth_http_state_known = True
+                    self.state.bt_enabled = last_observed
+                    self.state.bt_status = (
+                        f"{value}_FAILED_CURRENT_"
+                        f"{'ON' if last_observed else 'OFF'}"
+                    )
+                    self._bluetooth_target = None
+                    self._bluetooth_target_until = 0.0
+                    self._notify()
+                    raise RuntimeError(
+                        f"Bluetooth {command} was not applied by {self.host}"
+                    )
+
+                # Some firmware omits getbtvalue. A successful POST is still
+                # the best available result, and the requested state remains
+                # protected from stale MB#210 READY packets.
+                _LOGGER.warning(
+                    "Bluetooth %s accepted by %s but web state was unavailable",
+                    command,
+                    self.host,
+                )
+                self._bluetooth_target_until = time.monotonic() + 2.0
+                return
 
         # Pairing and disconnect remain LUCI MB#209 operations; the HTTP
         # endpoint only defines service ON/OFF.
         await self._send(0x02, MB_BLUETOOTH, command)
 
-    async def _refresh_bluetooth_http_state(self) -> None:
-        """Read the Bluetooth service flag exposed by the device web page."""
+    @staticmethod
+    def _parse_bluetooth_http_state(body: str) -> bool | None:
+        """Extract the Bluetooth service flag from the device web page."""
+        match = re.search(
+            r"getbtvalue\s*=\s*['\"]?([01])['\"]?",
+            body,
+            re.IGNORECASE,
+        )
+        return match.group(1) == "1" if match else None
+
+    async def _read_bluetooth_http_state(self) -> bool | None:
+        """Read the Bluetooth service flag without mutating speaker state."""
         try:
             timeout = aiohttp.ClientTimeout(total=2)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(f"http://{self.host}/") as response:
                     if response.status != 200:
-                        return
+                        return None
                     body = await response.text()
-            match = re.search(r"getbtvalue\s*=\s*['\"]([01])['\"]", body)
-            if match:
-                self.state.bt_enabled = match.group(1) == "1"
+            return self._parse_bluetooth_http_state(body)
         except (aiohttp.ClientError, asyncio.TimeoutError):
             _LOGGER.debug("Bluetooth HTTP state unavailable for %s", self.host)
+            return None
+
+    async def _refresh_bluetooth_http_state(self) -> None:
+        """Refresh Bluetooth state from the authoritative device web flag."""
+        enabled = await self._read_bluetooth_http_state()
+        if enabled is None:
+            return
+        changed = self.state.bt_enabled != enabled
+        self._bluetooth_http_state_known = True
+        self.state.bt_enabled = enabled
+        self.state.bt_status = "Bluetooth_ON" if enabled else "Bluetooth_OFF"
+        if changed:
+            self._notify()
 
     async def async_reboot(self) -> None:
         """Request speaker reboot.
@@ -1292,15 +1405,32 @@ class LitheClient:
         elif mbid == MB_BT_STATUS:
             self.state.bt_status = payload.strip()
             bt = self.state.bt_status.upper()
+            reported: bool | None = None
             if "OFF" in bt or bt.endswith(":0"):
-                self.state.bt_enabled = False
+                reported = False
             elif (
-                "ON" in bt
-                or "READY" in bt
-                or "CONNECT" in bt
+                bt in {"ON", "1", "ENABLED", "BLUETOOTH_ON"}
+                or bt.startswith("ENTPAIR")
+                or "CONNECTED" in bt
                 or bt.endswith(":1")
             ):
-                self.state.bt_enabled = True
+                reported = True
+
+            # READY is a player/service status, not reliable radio-state
+            # feedback. In particular it can arrive after Bluetooth_OFF.
+            if reported is not None:
+                target_pending = (
+                    self._bluetooth_target is not None
+                    and time.monotonic() < self._bluetooth_target_until
+                )
+                if target_pending and reported != self._bluetooth_target:
+                    _LOGGER.debug(
+                        "Ignoring stale MB#210 %r while Bluetooth target is %s",
+                        payload,
+                        "ON" if self._bluetooth_target else "OFF",
+                    )
+                else:
+                    self.state.bt_enabled = reported
 
         elif mbid == MB_TIMEZONE:
             self.state.timezone = payload.strip()
@@ -1346,14 +1476,26 @@ class LitheClient:
             # it specially. Otherwise fall through to the existing device-info
             # parser.
             p = payload.strip()
-            if p and not p.startswith("{") and self._pending_nv_read:
-                # We requested NV READ_<item> — this is the value
-                nv_item = self._pending_nv_read
-                self._pending_nv_read = None
-                if nv_item.lower() == "ssid":
-                    self.state.ssid = p
-                _LOGGER.debug("NV read %r = %r", nv_item, p)
-            else:
+            key = ""
+            value = ""
+            if ":" in p and not p.startswith("{"):
+                key, _, value = p.partition(":")
+
+            # Keyed broadcasts such as Model:WiFi v3 are device information,
+            # not the bare response to some other pending READ (for example
+            # READ_ssid). Only consume one when its key matches the request.
+            if key:
+                self._parse_device_info(payload)
+                if (
+                    self._pending_nv_read
+                    and self._normalise_nv_name(key)
+                    == self._normalise_nv_name(self._pending_nv_read)
+                ):
+                    self._complete_nv_read(value.strip())
+            elif p and self._pending_nv_read:
+                self._apply_nv_read_value(self._pending_nv_read, p)
+                self._complete_nv_read(p)
+            elif p:
                 self._parse_device_info(payload)
 
         else:
@@ -1537,6 +1679,9 @@ class LitheClient:
             "modelid":        "model",
             "deviceid":       "model",
             "hardware":       "model",
+            "modelnum":       "model_number",
+            "modelnumber":    "model_number",
+            "modelvariant":   "model_variant",
             # firmware
             "fwversion":      "firmware",
             "firmware":       "firmware",
@@ -1572,7 +1717,16 @@ class LitheClient:
         def _apply(key: str, val: str) -> None:
             attr = attr_map.get(_norm(key))
             if attr and val:
-                setattr(self.state, attr, str(val).strip())
+                cleaned = str(val).strip()
+                setattr(self.state, attr, cleaned)
+                if attr in {"model", "model_number", "model_variant"}:
+                    detected = product_from_model(
+                        self.state.model,
+                        self.state.model_number,
+                        self.state.model_variant,
+                    )
+                    if detected:
+                        self.state.detected_product = detected
 
         # JSON first
         try:
@@ -1589,6 +1743,50 @@ class LitheClient:
             if ":" in line:
                 key, _, val = line.partition(":")
                 _apply(key, val)
+
+    @staticmethod
+    def _normalise_nv_name(value: str) -> str:
+        """Normalize an NV key for response/request correlation."""
+        return value.strip().lower().replace("_", "").replace("-", "")
+
+    def _apply_nv_read_value(self, item: str, value: str) -> None:
+        """Apply a bare MB#208 READ response to typed speaker state."""
+        key = self._normalise_nv_name(item)
+        cleaned = value.strip()
+        if not cleaned or cleaned == "2":
+            return
+        if key == "ssid":
+            self.state.ssid = cleaned
+        elif key == "model":
+            self.state.model = cleaned
+            if detected := product_from_model(cleaned):
+                self.state.detected_product = detected
+        elif key in {"modelnum", "modelnumber"}:
+            self.state.model_number = cleaned
+        elif key == "modelvariant":
+            self.state.model_variant = cleaned
+
+        detected = product_from_model(
+            self.state.model,
+            self.state.model_number,
+            self.state.model_variant,
+        )
+        if detected:
+            self.state.detected_product = detected
+
+    def _complete_nv_read(self, value: str) -> None:
+        """Resolve the active serialized MB#208 request."""
+        item = self._pending_nv_read
+        future = self._pending_nv_future
+        # Clear synchronously so a second unsolicited MB#208 packet cannot be
+        # consumed as another response before the waiting coroutine resumes.
+        self._pending_nv_read = None
+        self._pending_nv_future = None
+        if item:
+            self._apply_nv_read_value(item, value)
+            _LOGGER.debug("NV read %r = %r", item, value)
+        if future and not future.done():
+            future.set_result(value)
 
     def _parse_favourites(self, payload: str) -> None:
         """Parse MB#70 favourites payload.
