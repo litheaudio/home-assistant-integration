@@ -22,6 +22,7 @@ Heart button uses fav_save with the current playback URL.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -44,6 +45,7 @@ class LitheLocalFavourites:
         self.hass = hass
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._slots: dict[int, dict[str, Any]] = {}
+        self._listeners: set[Callable[[], None]] = set()
 
     async def async_load(self) -> None:
         data = await self._store.async_load()
@@ -67,6 +69,15 @@ class LitheLocalFavourites:
             "slots": list(self._slots.values()),
         })
 
+    def async_listen(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Notify entities when a favourite name or URL changes."""
+        self._listeners.add(listener)
+        return lambda: self._listeners.discard(listener)
+
+    def _notify(self) -> None:
+        for listener in tuple(self._listeners):
+            listener()
+
     def list_all(self) -> list[dict[str, Any]]:
         """Return slots 1-9 in order; empty slots are placeholders."""
         result = []
@@ -84,6 +95,7 @@ class LitheLocalFavourites:
         slot = max(1, min(MAX_SLOTS, int(slot)))
         self._slots[slot] = {"slot": slot, "name": name.strip(), "url": url.strip()}
         await self.async_save()
+        self._notify()
         _LOGGER.info("Saved local favourite slot %d: %r → %s", slot, name, url)
 
     async def async_rename(self, slot: int, name: str) -> None:
@@ -100,18 +112,72 @@ class LitheLocalFavourites:
             "url": str(existing.get("url", "")),
         }
         await self.async_save()
+        self._notify()
         _LOGGER.info("Renamed favourite slot %d to %r", slot, name)
 
     async def async_delete(self, slot: int) -> None:
         self._slots.pop(int(slot), None)
         await self.async_save()
+        self._notify()
 
-    def next_free_slot(self) -> int:
+    def next_free_slot(self, occupied_slots: set[int] | None = None) -> int:
         """Return the lowest free slot (1-9). Wraps to 1 if all full."""
+        occupied_slots = occupied_slots or set()
         for s in range(1, MAX_SLOTS + 1):
-            if s not in self._slots:
+            # A name-only entry is an alias waiting for content, not a used
+            # favourite. This lets users name slot 1 "Doorbell" first and
+            # then save the next track into that same slot.
+            if (
+                s not in occupied_slots
+                and (s not in self._slots or not self._slots[s].get("url"))
+            ):
                 return s
         return 1  # all full — overwrite slot 1
+
+
+async def async_capture_current_favourite(
+    manager: LitheLocalFavourites,
+    client: Any,
+    slot: int | None = None,
+) -> int:
+    """Save current playback while preserving the configured slot alias.
+
+    URL-based playback is stored locally. Spotify/AirPlay sessions often do
+    not expose a reusable URL, so the native MB#70 save is still attempted.
+    """
+    native_slots = {
+        int(item.get("slot", 0) or 0)
+        for item in (getattr(client.state, "favourites", None) or [])
+    }
+    slot = slot or manager.next_free_slot(native_slots)
+    slot = max(1, min(MAX_SLOTS, int(slot)))
+    existing = manager.get(slot) or {}
+    alias = str(existing.get("name") or "").strip()
+    state = client.state
+    url = str(state.last_played_url or "").strip()
+    name = alias or str(state.title or "").strip()
+    if not name and url:
+        from urllib.parse import urlparse
+        name = urlparse(url).path.rsplit("/", 1)[-1]
+        if "." in name:
+            name = name.rsplit(".", 1)[0]
+    name = name or f"Favourite {slot}"
+
+    if url:
+        await manager.async_set(slot, name, url)
+    elif alias:
+        # Keep the chosen label visible while the firmware owns the content.
+        await manager.async_rename(slot, alias)
+
+    try:
+        await client.async_save_favourite(slot)
+    except Exception as err:
+        if not url:
+            raise
+        _LOGGER.debug("Native favourite save failed for slot %d: %s", slot, err)
+
+    _LOGGER.info("Captured current playback as favourite %d (%s)", slot, name)
+    return slot
 
 
 def get_local_favs(hass: HomeAssistant) -> LitheLocalFavourites | None:
@@ -166,6 +232,12 @@ def register_local_fav_services(hass: HomeAssistant) -> None:
         # Auto-pick next free slot if not specified
         if slot < 1:
             slot = mgr.next_free_slot()
+
+        existing = mgr.get(slot) or {}
+        if not name:
+            # A user-assigned slot label is authoritative. Capturing new
+            # content must not silently replace "Oskar" with a track title.
+            name = str(existing.get("name") or "").strip()
 
         # If no URL given, capture the current playback URL from speaker
         entity_id = None

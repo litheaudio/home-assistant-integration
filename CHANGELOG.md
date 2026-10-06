@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.31] - 2026-10-06
+
+### Fixed
+
+- Apply editable favourite names to the corresponding Save and Play button
+  labels, with live entity refresh after a rename.
+- Treat a renamed but empty slot as available, so naming slot 1 "Oskar"
+  before saving stores the next favourite in slot 1 and preserves that name.
+- Save URL playback locally as well as attempting the native MB#70 save;
+  Spotify and AirPlay sessions without a reusable URL still use MB#70.
+
+### Added
+
+- Add a playable "Save Current Track" action to the Lithe speaker's Browse
+  Media root, targeting the next empty or pre-named favourite slot.
+
+## [1.4.30] - 2026-10-06
+
+### Fixed
+
+- Replace the unsupported PRO 2 MB#112 subcommands `0x1A` and `0x1D` with
+  firmware-backed commands: `0x32` for high-pass frequency and `0x0D` for
+  13L enclosure/open-back protection.
+- Correct high-pass values to `0=60 Hz`, `1=80 Hz`, `2=100 Hz`, and
+  `3=120 Hz`; the firmware also supports value `4=150 Hz`, which is not
+  exposed because it is absent from the requested PRO 2 control surface.
+- Record raw and decoded MB#112 feedback in integration diagnostics and log
+  each decoded packet at info level for bench verification.
+
+## [1.4.29] - 2026-10-06
+
+### Fixed
+
+- Detect current Music Assistant media players registered under the `mass`
+  integration domain, restoring their library folders in Lithe Browse Media.
+- Match Music Assistant players by friendly name or entity ID, with a safe
+  fallback when Home Assistant contains exactly one Music Assistant player.
+
 ## [1.4.28] — 2026-10-06
 
 ### Added

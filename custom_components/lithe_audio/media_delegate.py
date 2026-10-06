@@ -56,15 +56,21 @@ def choose_music_assistant_entity(
         if isinstance(candidate, str) and normalize_player_name(candidate)
     }
     available = [
-        (entity_id, normalize_player_name(name))
+        (
+            entity_id,
+            {
+                normalize_player_name(name),
+                normalize_player_name(entity_id.rsplit(".", 1)[-1]),
+            },
+        )
         for entity_id, name in entities
         if isinstance(entity_id, str) and isinstance(name, str)
     ]
 
     exact = [
         entity_id
-        for entity_id, normalized_name in available
-        if normalized_name in normalized_candidates
+        for entity_id, normalized_names in available
+        if normalized_names & normalized_candidates
     ]
     if len(exact) == 1:
         return exact[0]
@@ -73,14 +79,20 @@ def choose_music_assistant_entity(
 
     close = [
         entity_id
-        for entity_id, normalized_name in available
+        for entity_id, normalized_names in available
         if any(
             len(candidate) >= 4
-            and (
-                candidate in normalized_name
-                or normalized_name in candidate
+            and any(
+                candidate in normalized_name or normalized_name in candidate
+                for normalized_name in normalized_names
+                if normalized_name
             )
             for candidate in normalized_candidates
         )
     ]
-    return close[0] if len(close) == 1 else None
+    if len(close) == 1:
+        return close[0]
+
+    # A single loaded MA player is unambiguous even when it was renamed
+    # independently from the physical Lithe entity.
+    return available[0][0] if len(available) == 1 else None

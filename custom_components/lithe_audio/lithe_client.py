@@ -100,8 +100,10 @@ class SpeakerState:
     dsp_nightmode: int | None = None  # 0x0C: 0=OFF 1=ON
     dsp_balance:   int | None = None  # 0x0E: signed -6..+6
     dsp_output:    int | None = None  # 0x0F: 0=Mono 1=Stereo 2=Left 3=Right
-    dsp_highpass:  int | None = None  # 0x1A: Off/60/80/100/120 Hz
-    dsp_tuning:    int | None = None  # 0x1D: 13L enclosure/open back
+    dsp_highpass:  int | None = None  # 0x32: 60/80/100/120/150 Hz
+    dsp_tuning:    int | None = None  # 0x0D: 13L enclosure/open back
+    dsp_last_raw: str = ""
+    dsp_last_decoded: str = ""
 
     # Player role (per API_NEW page 25): "Free" / "Master" / "Slave"
     # Slave devices cannot trigger chimes — they must be sent to the master.
@@ -1459,6 +1461,7 @@ class LitheClient:
                 }
 
                 raw = payload.encode("latin-1") if isinstance(payload, str) else payload
+                self.state.dsp_last_raw = " ".join(f"{byte:02X}" for byte in raw)
                 parsed = []
                 updates: list[tuple[str, int]] = []
                 i = 0
@@ -1507,9 +1510,12 @@ class LitheClient:
                 for attr, val in updates:
                     setattr(self.state, attr, val)
 
-                if _LOGGER.isEnabledFor(logging.DEBUG) and parsed:
-                    _LOGGER.debug(
-                        "DSP MB#112 decoded: %s%s",
+                self.state.dsp_last_decoded = "; ".join(parsed)
+
+                if parsed:
+                    _LOGGER.info(
+                        "RX DSP MB#112 raw=%s decoded=%s%s",
+                        self.state.dsp_last_raw,
                         "; ".join(parsed),
                         f" → updated {len(updates)} fields" if updates else "",
                     )

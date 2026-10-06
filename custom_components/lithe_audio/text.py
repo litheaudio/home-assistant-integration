@@ -49,6 +49,12 @@ class LitheFavouriteNameText(TextEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(identifiers={(DOMAIN, self._entry.data["host"])})
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        manager = get_local_favs(self.hass)
+        if manager:
+            self.async_on_remove(manager.async_listen(self.async_write_ha_state))
+
     @property
     def native_value(self) -> str:
         manager = get_local_favs(self.hass)

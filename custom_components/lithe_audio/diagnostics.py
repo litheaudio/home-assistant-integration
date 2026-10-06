@@ -85,6 +85,8 @@ async def async_get_config_entry_diagnostics(
             # DSP / model-specific controls
             "dsp_highpass":      s.dsp_highpass,
             "dsp_tuning":        s.dsp_tuning,
+            "dsp_last_raw":       s.dsp_last_raw,
+            "dsp_last_decoded":   s.dsp_last_decoded,
         }
         fav_count = len(s.favourites)
 

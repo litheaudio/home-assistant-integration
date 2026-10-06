@@ -64,6 +64,8 @@ _PLAYABLE_TYPES = {
 _FAV_PREFIX = "lithe_fav://"
 # Internal content_id prefix for chimes
 _CHIME_PREFIX = "lithe_chime://"
+# Browse Media action for the same operation as the heart button.
+_SAVE_CURRENT_FAVOURITE = "lithe_action:save_current_favourite"
 
 
 async def async_setup_entry(
@@ -164,6 +166,13 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             # exposed). Some users may need to use the Lithe app instead.
             configuration_url=f"http://{self._client.host}",
         )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        from .local_favs import get_local_favs
+        manager = get_local_favs(self.hass)
+        if manager:
+            self.async_on_remove(manager.async_listen(self.async_write_ha_state))
 
     # ── Feature flags ──────────────────────────────────────────────────────
 
@@ -803,6 +812,19 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             )
             return
 
+        if media_id == _SAVE_CURRENT_FAVOURITE:
+            from .local_favs import (
+                async_capture_current_favourite,
+                get_local_favs,
+            )
+            manager = get_local_favs(self.hass)
+            if manager is None:
+                _LOGGER.warning("Cannot save favourite: manager not initialised")
+                return
+            slot = await async_capture_current_favourite(manager, self._client)
+            self._client._heart_last_slot = slot  # type: ignore[attr-defined]
+            return
+
         # Favourite by content_id (no announce flow — favourites resume
         # the speaker's own playback engine)
         if media_id.startswith(_FAV_PREFIX):
@@ -1191,6 +1213,35 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # Build root: favourites + media sources
         children: list[BrowseMedia] = []
 
+        # Save action shown directly on this speaker's Browse Media page.
+        # The stock HA more-info transport row cannot be extended by a
+        # backend integration, so Browse Media is the supported UI surface.
+        next_slot = 1
+        next_name = "Favourite 1"
+        try:
+            from .local_favs import get_local_favs
+            manager = get_local_favs(self.hass)
+            if manager:
+                native_slots = {
+                    int(item.get("slot", 0) or 0)
+                    for item in (self._client.state.favourites or [])
+                }
+                next_slot = manager.next_free_slot(native_slots)
+                pending = manager.get(next_slot) or {}
+                next_name = str(
+                    pending.get("name") or f"Favourite {next_slot}"
+                )
+        except Exception as err:
+            _LOGGER.debug("Failed to build save-favourite action: %s", err)
+        children.append(BrowseMedia(
+            title=f"Save Current Track to {next_name}",
+            media_class=MediaClass.MUSIC,
+            media_content_id=_SAVE_CURRENT_FAVOURITE,
+            media_content_type=MediaType.MUSIC,
+            can_play=True,
+            can_expand=False,
+        ))
+
         # 1a) HA-side favourites (saved by Heart button or fav_save service)
         local_slots: set[int] = set()
         name_overrides: dict[int, str] = {}
@@ -1406,21 +1457,41 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         registry = er.async_get(self.hass)
         entities: list[tuple[str, str]] = []
         for entry in registry.entities.values():
-            if (
-                entry.domain != MEDIA_PLAYER_DOMAIN
-                or entry.platform != "music_assistant"
-                or entry.disabled_by is not None
-            ):
+            if entry.domain != MEDIA_PLAYER_DOMAIN or entry.disabled_by is not None:
                 continue
             state = self.hass.states.get(entry.entity_id)
-            if state is not None:
+            if state is None:
+                continue
+
+            # Current Music Assistant releases register as "mass". Retain
+            # the old name and state markers for migrated installations.
+            config_domain = ""
+            if entry.config_entry_id:
+                config_entry = self.hass.config_entries.async_get_entry(
+                    entry.config_entry_id
+                )
+                config_domain = config_entry.domain if config_entry else ""
+            is_music_assistant = (
+                entry.platform in {"mass", "music_assistant"}
+                or config_domain in {"mass", "music_assistant"}
+                or "mass_player_type" in state.attributes
+                or "mass_player_id" in state.attributes
+            )
+            if is_music_assistant:
                 entities.append((entry.entity_id, state.name))
 
         entry_title = self._entry.title.rsplit(" (", 1)[0]
-        return choose_music_assistant_entity(
+        selected = choose_music_assistant_entity(
             entities,
             (self._client.state.name or "", entry_title, self.name or ""),
         )
+        _LOGGER.debug(
+            "Music Assistant player match for %s: candidates=%s selected=%s",
+            self.entity_id,
+            [entity_id for entity_id, _name in entities],
+            selected,
+        )
+        return selected
 
     def _wrap_music_assistant_browse(
         self, item: BrowseMedia, ma_entity_id: str

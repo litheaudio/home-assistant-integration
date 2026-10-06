@@ -134,7 +134,7 @@ class LitheOutputSelect(_LitheBaseSelect):
 
 
 class LitheHighPassSelect(_LitheBaseSelect):
-    """PRO 2 high-pass filter selector."""
+    """PRO 2 high-pass frequency selector (MCU HOSTMCUSETTINGS 0x32)."""
 
     _attr_name = "Audio — High Pass Filter"
     _attr_options = HP_OPTIONS
@@ -165,7 +165,7 @@ class LitheHighPassSelect(_LitheBaseSelect):
 
 
 class LitheTuningSelect(_LitheBaseSelect):
-    """PRO 2 enclosure tuning selector."""
+    """PRO 2 enclosure/open-back protection selector (MCU 0x0D)."""
 
     _attr_name = "Audio — Speaker Tuning"
     _attr_options = TUNING_OPTIONS

@@ -61,6 +61,7 @@ class _LitheBaseButton(CoordinatorEntity[LitheAudioCoordinator], ButtonEntity):
         super().__init__(coordinator)
         self._entry = entry
         self._client = coordinator.client
+        self._favourite_manager = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -69,6 +70,14 @@ class _LitheBaseButton(CoordinatorEntity[LitheAudioCoordinator], ButtonEntity):
     @property
     def available(self) -> bool:
         return self._client.state.connected
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        from .local_favs import get_local_favs
+        manager = get_local_favs(self.hass)
+        if manager:
+            self._favourite_manager = manager
+            self.async_on_remove(manager.async_listen(self.async_write_ha_state))
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -165,7 +174,7 @@ class LitheReleaseSourceButton(_LitheBaseButton):
         await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
 
 
-class LitheSaveFavouriteButton(ButtonEntity):
+class LitheSaveFavouriteButton(_LitheBaseButton):
     """Save currently-playing track to a favourite slot.
 
     Press to save whatever is playing right now (Spotify Connect, Airable,
@@ -177,28 +186,28 @@ class LitheSaveFavouriteButton(ButtonEntity):
     _attr_icon = "mdi:heart-plus"
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry, slot: int) -> None:
-        self._coord = coordinator
-        self._client = coordinator.client
-        self._entry = entry
+        super().__init__(coordinator, entry)
         self._slot = slot
-        # "Favourites — Save N" groups under Favourites section in Controls
-        self._attr_name = f"Favourites — Save {slot}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_save_fav_{slot}"
 
     @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, self._entry.data["host"])})
-
-    @property
-    def available(self) -> bool:
-        return self._client.state.connected
+    def name(self) -> str:
+        manager = self._favourite_manager
+        favourite = manager.get(self._slot) if manager else None
+        label = favourite.get("name") if favourite else None
+        return f"Favourites — Save {label or self._slot}"
 
     async def async_press(self) -> None:
         _LOGGER.info("Save to favourite slot %d pressed", self._slot)
-        await self._client.async_save_favourite(self._slot)
+        from .local_favs import async_capture_current_favourite, get_local_favs
+        manager = get_local_favs(self.hass)
+        if manager is None:
+            await self._client.async_save_favourite(self._slot)
+            return
+        await async_capture_current_favourite(manager, self._client, self._slot)
 
 
-class LithePlayFavouriteButton(ButtonEntity):
+class LithePlayFavouriteButton(_LitheBaseButton):
     """Play a saved favourite from a specific slot.
 
     Tries HA-side favourites first (works around the speaker's frequent
@@ -210,21 +219,16 @@ class LithePlayFavouriteButton(ButtonEntity):
     _attr_icon = "mdi:heart"
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry, slot: int) -> None:
-        self._coord = coordinator
-        self._client = coordinator.client
-        self._entry = entry
+        super().__init__(coordinator, entry)
         self._slot = slot
-        # "Favourites — Play N" groups under Favourites section in Controls
-        self._attr_name = f"Favourites — Play {slot}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_play_fav_{slot}"
 
     @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, self._entry.data["host"])})
-
-    @property
-    def available(self) -> bool:
-        return self._client.state.connected
+    def name(self) -> str:
+        manager = self._favourite_manager
+        favourite = manager.get(self._slot) if manager else None
+        label = favourite.get("name") if favourite else None
+        return f"Favourites — Play {label or self._slot}"
 
     async def async_press(self) -> None:
         _LOGGER.info("Play favourite slot %d pressed", self._slot)
@@ -253,7 +257,7 @@ class LithePlayFavouriteButton(ButtonEntity):
             _LOGGER.warning("Native favourite play failed: %s", e)
 
 
-class LitheHeartButton(ButtonEntity):
+class LitheHeartButton(_LitheBaseButton):
     """♥ Heart button — saves current track to the next free favourite slot.
 
     Press once to add the currently-playing track to favourites without
@@ -270,19 +274,9 @@ class LitheHeartButton(ButtonEntity):
     _attr_icon = "mdi:heart"
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry) -> None:
-        self._coord = coordinator
-        self._client = coordinator.client
-        self._entry = entry
+        super().__init__(coordinator, entry)
         self._attr_name = "Favourites — ♥ Save Current Track"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_heart_save"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, self._entry.data["host"])})
-
-    @property
-    def available(self) -> bool:
-        return self._client.state.connected
 
     def _next_free_slot(self) -> int:
         """Find next free favourite slot (1-9). Wraps around after 9.
@@ -294,47 +288,19 @@ class LitheHeartButton(ButtonEntity):
         mgr = get_local_favs(self.hass)
         if mgr is None:
             return 1
-        return mgr.next_free_slot()
+        native_slots = {
+            int(item.get("slot", 0) or 0)
+            for item in (self._client.state.favourites or [])
+        }
+        return mgr.next_free_slot(native_slots)
 
     async def async_press(self) -> None:
-        # Use HA-side favourites (works for any URL including Direct URL,
-        # which the speaker's MB#70 FAV_SAVE rejects with GENERIC_FAV_SAVE_FAIL).
-        from .local_favs import get_local_favs
+        from .local_favs import async_capture_current_favourite, get_local_favs
         mgr = get_local_favs(self.hass)
         if mgr is None:
             _LOGGER.warning("Heart button: local favourites manager not initialised")
             return
 
         slot = self._next_free_slot()
-        # Capture URL + name from current playback state
-        s = self._client.state
-        url = s.last_played_url or ""
-        name = s.title or ""
-        if not name and url:
-            from urllib.parse import urlparse
-            name = urlparse(url).path.rsplit("/", 1)[-1]
-            if "." in name:
-                name = name.rsplit(".", 1)[0]
-        if not name:
-            name = f"Favourite {slot}"
-
-        if not url:
-            _LOGGER.warning(
-                "Heart pressed but no URL is currently playing on %s — "
-                "cannot save. Try playing a track first.",
-                self._client.host,
-            )
-            return
-
-        _LOGGER.info(
-            "Heart pressed — saving slot %d: %r → %s",
-            slot, name, url,
-        )
-        await mgr.async_set(slot, name, url)
-        # Also try the native MB#70 save for completeness (will fail for
-        # Direct URL but works for Spotify/AirPlay sources).
-        try:
-            await self._client.async_save_favourite(slot)
-        except Exception:
-            pass
+        await async_capture_current_favourite(mgr, self._client, slot)
         self._client._heart_last_slot = slot  # type: ignore[attr-defined]

@@ -186,10 +186,11 @@ DSP_LOUDNESS  = 0x0B   # 0=OFF, 1=ON
 DSP_NIGHTMODE = 0x0C   # 0=OFF, 1=ON
 DSP_BALANCE   = 0x0E   # signed -6..+6
 DSP_OUTPUT    = 0x0F   # 0=Mono, 1=Stereo, 2=Left, 3=Right
-# PRO 2-only controls captured from the Lithe app. These use the same modern
-# six-byte HOSTMCUSETTINGS envelope and MCU RemoteID as the controls above.
-DSP_HIGHPASS  = 0x1A   # 0=Off, 1=60Hz, 2=80Hz, 3=100Hz, 4=120Hz
-DSP_TUNING    = 0x1D   # 0=13L enclosure, 1=open back
+# PRO 2-only controls recovered from the CR443GP MCU dispatch table. The
+# previous 0x1A/0x1D values land in the firmware's unsupported/default branch.
+# 0x32 calls the DSP frequency setter; 0x0D controls open-back protection.
+DSP_HIGHPASS  = 0x32   # 0=60Hz, 1=80Hz, 2=100Hz, 3=120Hz, 4=150Hz
+DSP_TUNING    = 0x0D   # 0=13L enclosure, 1=open-back protection
 
 DSP_BASS_FIELD   = 0x06
 DSP_MID_FIELD    = 0x04
@@ -197,7 +198,7 @@ DSP_TREBLE_FIELD = 0x02
 
 EQ_PRESETS  = ["Normal", "Acoustic", "Jazz", "Pop", "Hip-Hop"]
 OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]
-HP_OPTIONS = ["Off", "60 Hz", "80 Hz", "100 Hz", "120 Hz"]
+HP_OPTIONS = ["60 Hz", "80 Hz", "100 Hz", "120 Hz"]
 TUNING_OPTIONS = ["Enclosure Mode 13L", "Open Back Mode"]
 
 # ── Per-product chime counts ────────────────────────────────────────────────
