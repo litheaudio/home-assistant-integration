@@ -222,6 +222,19 @@ PRODUCT_CHIMES = {
     PRODUCT_MICRO: 0,
 }
 
+CHIME_NAMES = {
+    1: "Bell",
+    2: "Bell",
+    3: "Bell",
+    4: "Bell",
+    5: "Alarm",
+    6: "Alarm",
+    7: "Siren",
+    8: "Siren",
+    9: "Siren",
+    10: "Siren",
+}
+
 # ── Per-product capability matrix ───────────────────────────────────────────
 # Single source of truth for which entities get created per product.
 # Every entity platform reads from this — no scattered ``if product in (…)``
@@ -231,7 +244,7 @@ PRODUCT_CHIMES = {
 #   chimes           — number of chime slots (0 = no chime buttons)
 #   eq_select        — EQ preset selector
 #   output_select    — Stereo/Mono/Left/Right selector
-#   highpass_select  — PRO 2 high-pass filter selector
+#   highpass_select  — legacy PRO 2 frequency selector (not exposed)
 #   tuning_switch    — PRO 2 enclosure/open-back protection switch
 #   balance_number   — -6..+6 balance slider
 #   loudness_switch  — on/off loudness
@@ -242,7 +255,7 @@ PRODUCT_CAPS = {
         "chimes":           15,
         "eq_select":        True,
         "output_select":    True,
-        "highpass_select":  True,
+        "highpass_select":  False,
         "tuning_select":    False,
         "tuning_switch":    True,
         "balance_number":   True,

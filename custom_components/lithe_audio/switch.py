@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -40,7 +42,9 @@ async def async_setup_entry(
         async_add_entities(entities)
 
 
-class _LitheBaseSwitch(CoordinatorEntity[LitheAudioCoordinator], SwitchEntity):
+class _LitheBaseSwitch(
+    CoordinatorEntity[LitheAudioCoordinator], SwitchEntity, RestoreEntity
+):
     _attr_has_entity_name = True
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry) -> None:
@@ -60,6 +64,12 @@ class _LitheBaseSwitch(CoordinatorEntity[LitheAudioCoordinator], SwitchEntity):
     @property
     def is_on(self) -> bool:
         return self._state
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            self._state = last_state.state == STATE_ON
 
     @callback
     def _handle_coordinator_update(self) -> None:

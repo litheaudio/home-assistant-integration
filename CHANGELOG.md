@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.35] - 2026-10-07
+
+### Fixed
+
+- Decode both binary and ASCII MB#112 state broadcasts for Loudness, Night
+  Mode and the PRO 2 High Pass Filter switch, and restore their last confirmed
+  Home Assistant state while waiting for the first speaker broadcast.
+- Decode both PRO 2 loudness-gain feedback subcommands on the MCU's unsigned
+  `0..20` scale so the `-10..+10 dB` slider no longer jumps to a false value.
+- Remove obsolete Cast group proxy entities and the superseded PRO 2 high-pass
+  frequency selector from the device page.
+- Label chime slots 1-4 Bell, 5-6 Alarm and 7-10 Siren. Slot 10 is sent as the
+  vendor-specified ASCII command `play 10` with a seven-byte payload.
+
 ## [1.4.34] - 2026-10-07
 
 ### Fixed

@@ -267,8 +267,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Remove entities superseded by the slot selector/save button workflow
     # and the binary high-pass filter switch.
     registry = er.async_get(hass)
+    for registry_entry in list(registry.entities.values()):
+        if (
+            registry_entry.platform == DOMAIN
+            and str(registry_entry.unique_id).startswith("lithe_cast_proxy_")
+        ):
+            registry.async_remove(registry_entry.entity_id)
     obsolete_unique_ids = [
         ("select", f"{host}_{entry.entry_id}_tuning"),
+        ("select", f"{host}_{entry.entry_id}_highpass"),
         *(
             ("button", f"{host}_{entry.entry_id}_save_fav_{slot}")
             for slot in range(1, 11)

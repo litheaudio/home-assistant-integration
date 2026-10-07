@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_CHIMES,
+    CHIME_NAMES, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_CHIMES,
 )
 from .coordinator import LitheAudioCoordinator
 from .local_favs import MAX_SLOTS
@@ -95,7 +95,8 @@ class LitheChimeButton(ButtonEntity):
         self._slot = slot
         # "Chimes — NN" prefix groups all chime entities together
         # alphabetically in the Controls section.
-        self._attr_name = f"Chimes — {slot:02d}"
+        label = CHIME_NAMES.get(slot, "Chime")
+        self._attr_name = f"Chimes — {slot:02d} {label}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_chime_{slot}"
 
     @property

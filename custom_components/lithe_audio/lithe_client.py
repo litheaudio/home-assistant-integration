@@ -1446,23 +1446,26 @@ class LitheClient:
                     return b
                 def _unsigned(b: int) -> int:
                     return b
+                def _boolean(b: int) -> int:
+                    # Accept binary and ASCII state bytes from firmware builds.
+                    return 1 if b in (1, 0x31) else 0
                 def _loudness_gain_feedback(b: int) -> int:
                     return b - 10
 
                 _DSP_MAP: dict[int, tuple[str, callable]] = {
                     DSP_EQ:        ("dsp_eq",        _unsigned),
-                    DSP_LOUDNESS:  ("dsp_loudness",  _unsigned),
+                    DSP_LOUDNESS:  ("dsp_loudness",  _boolean),
                     DSP_LOUDNESS_GAIN: (
-                        "dsp_loudness_gain", _signed_8
+                        "dsp_loudness_gain", _loudness_gain_feedback
                     ),
                     DSP_LOUDNESS_GAIN_FEEDBACK: (
                         "dsp_loudness_gain", _loudness_gain_feedback
                     ),
-                    DSP_NIGHTMODE: ("dsp_nightmode", _unsigned),
+                    DSP_NIGHTMODE: ("dsp_nightmode", _boolean),
                     DSP_BALANCE:   ("dsp_balance",   _signed_8),
                     DSP_OUTPUT:    ("dsp_output",    _unsigned),
                     DSP_HIGHPASS:  ("dsp_highpass",  _unsigned),
-                    DSP_TUNING:    ("dsp_tuning",    _unsigned),
+                    DSP_TUNING:    ("dsp_tuning",    _boolean),
                 }
                 _DSP_FIELD_MAP: dict[tuple[int, int], tuple[str, callable]] = {
                     (DSP_EQ_BANDS, DSP_BASS_FIELD):   ("dsp_bass", _signed_8),

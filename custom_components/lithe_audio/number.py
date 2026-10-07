@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -132,7 +133,7 @@ class LitheBalanceNumber(_LitheBaseNumber):
         self.async_write_ha_state()
 
 
-class LitheLoudnessNumber(_LitheBaseNumber):
+class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
     """PRO 2 loudness gain, enabled by the separate loudness switch."""
 
     _attr_name = "Audio — Loudness Gain"
@@ -150,6 +151,18 @@ class LitheLoudnessNumber(_LitheBaseNumber):
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_loudness"
         self._value = 0
         self._optimistic_until: float = 0.0
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._client.state.dsp_loudness_gain is not None:
+            return
+        last_state = await self.async_get_last_state()
+        if last_state is None:
+            return
+        try:
+            self._value = max(-10, min(10, int(float(last_state.state))))
+        except (TypeError, ValueError):
+            pass
 
     @property
     def available(self) -> bool:

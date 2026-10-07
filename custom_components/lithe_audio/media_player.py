@@ -82,11 +82,7 @@ async def async_setup_entry(
     # subsequent entries skip the group creation.
     if not hass.data.get(DOMAIN, {}).get("_groups_added"):
         try:
-            from .group import (
-                create_cast_group_proxies,
-                get_group_manager,
-                LitheGroupMediaPlayer,
-            )
+            from .group import get_group_manager, LitheGroupMediaPlayer
             mgr = get_group_manager(hass)
             if mgr:
                 groups = mgr.list_groups()
@@ -100,13 +96,7 @@ async def async_setup_entry(
                     _LOGGER.info("Lithe groups changed — restart required to fully apply add/remove")
                 mgr.register_listener(_on_groups_changed)
 
-            proxies = create_cast_group_proxies(hass, entry.data["host"])
-            entities.extend(proxies)
             hass.data[DOMAIN]["_groups_added"] = True
-            _LOGGER.info(
-                "Created %d Google Cast group proxies for the Join picker",
-                len(proxies),
-            )
         except Exception as e:
             _LOGGER.error("Failed to set up group entities: %s", e)
 
