@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.32** — Restores PRO 2 loudness gain, adds a plain ON/OFF high-pass switch, and adds explicit named favourite slot selection.
+**Latest: 1.4.33** — Restores Music Assistant library categories when multiple players prevent a unique speaker-name match.
 
 ---
 
@@ -13,6 +13,7 @@ Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on po
 | 🎵 **Media playback** | Play/pause, volume, next/prev, shuffle, repeat, position tracking |
 | 🟢 **Spotify** | Browse an official HA Spotify account and transfer playback to the selected Lithe speaker |
 | 📻 **Browse media** | Favourites + Adhan + Quran + BBC + HA media sources (Radio Browser, TTS, local files) |
+| 🎼 **Music Assistant** | Artists, albums, tracks, playlists, radio, podcasts and audiobooks from a connected Music Assistant integration |
 | 🕋 **Prayer Scheduler** | Daily Adhan at calculated prayer times for your city — 6 prayers including Sunrise & Sunset |
 | ⏰ **Alarms** | Daily / weekly / monthly with per-day toggles, fade-in volume, multi-room targeting |
 | 🔊 **Multi-room Groups** | Virtual group entities — play across multiple speakers simultaneously |
@@ -71,6 +72,15 @@ Spotify credentials remain entirely in the official Spotify integration. The
 Lithe integration only delegates browse and playback actions to its media
 player entity. The Spotify Connect device name should match the Lithe speaker
 name; ambiguous names are rejected to avoid playing in the wrong room.
+
+### Music Assistant library
+
+The Artists, Albums, Tracks, Playlists, Radio stations, Podcasts and
+Audiobooks entries are supplied by Music Assistant. Install both the Music
+Assistant server/add-on and its Home Assistant integration, then confirm that
+at least one Music Assistant `media_player` entity is enabled and loaded. The
+Lithe browser uses that entity's global library; the add-on dashboard alone
+does not expose a browse API to Home Assistant.
 
 Click **Configure** (gear icon) for:
 

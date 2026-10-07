@@ -1535,17 +1535,72 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 entities.append((entity_id, state.name))
                 seen.add(entity_id)
 
+        # Some Home Assistant releases do not expose EntityComponent.entities,
+        # while Music Assistant still publishes fully populated states. Scan
+        # the live state machine as the final discovery source.
+        for state in self.hass.states.async_all(MEDIA_PLAYER_DOMAIN):
+            entity_id = state.entity_id
+            if entity_id in seen or entity_id == self.entity_id:
+                continue
+            entry = registry.async_get(entity_id)
+            config_domain = ""
+            registry_platform = ""
+            if entry is not None:
+                registry_platform = entry.platform
+                if entry.config_entry_id:
+                    config_entry = self.hass.config_entries.async_get_entry(
+                        entry.config_entry_id
+                    )
+                    config_domain = config_entry.domain if config_entry else ""
+            attributes = state.attributes
+            object_id = entity_id.partition(".")[2]
+            if (
+                registry_platform in {"mass", "music_assistant"}
+                or config_domain in {"mass", "music_assistant"}
+                or object_id.startswith(("mass_", "music_assistant_"))
+                or "mass_player_type" in attributes
+                or "mass_player_id" in attributes
+            ):
+                entities.append((entity_id, state.name))
+                seen.add(entity_id)
+
         entry_title = self._entry.title.rsplit(" (", 1)[0]
         selected = choose_music_assistant_entity(
             entities,
             (self._client.state.name or "", entry_title, self.name or ""),
         )
+        if selected is None and entities:
+            # Music Assistant's browse tree is a global library. When several
+            # MA players exist but none has a unique name match, using one
+            # loaded entity is still valid for browsing and is preferable to
+            # silently removing Artists/Albums/Playlists/Podcasts/Audiobooks.
+            # Sort for stable behavior across restarts.
+            selected = sorted(entity_id for entity_id, _name in entities)[0]
+            _LOGGER.warning(
+                "No unique Music Assistant player matched %s; using %s "
+                "as the global library browser",
+                self.name,
+                selected,
+            )
         _LOGGER.debug(
             "Music Assistant player match for %s: candidates=%s selected=%s",
             self.entity_id,
             [entity_id for entity_id, _name in entities],
             selected,
         )
+        if selected is None:
+            loaded_domains = {
+                entry.domain
+                for domain in ("mass", "music_assistant")
+                for entry in self.hass.config_entries.async_entries(domain)
+            }
+            _LOGGER.warning(
+                "Music Assistant library categories are unavailable for %s: "
+                "no loaded Music Assistant media_player entity was found "
+                "(loaded integration domains: %s)",
+                self.entity_id,
+                sorted(loaded_domains) or "none",
+            )
         return selected
 
     def _wrap_music_assistant_browse(

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.33] - 2026-10-07
+
+### Fixed
+
+- Restore Music Assistant Artists, Albums, Tracks, Playlists, Radio Stations,
+  Podcasts and Audiobooks when multiple loaded Music Assistant players make
+  an exact Lithe-to-Music-Assistant name match ambiguous. The global library
+  browse now uses a deterministic loaded Music Assistant entity as fallback.
+- Discover Music Assistant players from Home Assistant's live state machine
+  when a release does not expose them through the media-player component, and
+  log a clear prerequisite warning when no loaded player entity exists.
+
 ## [1.4.32] - 2026-10-07
 
 ### Added
