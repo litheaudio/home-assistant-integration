@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.42** — Removes duplicated Home Assistant sources from Browse Media.
+**Latest: 1.4.43** — Improves source and favourites controls and labels PRO 2 chimes 11-14.
 
 ---
 

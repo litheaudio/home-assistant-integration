@@ -232,10 +232,10 @@ CHIME_NAMES = {
     8: "Siren",
     9: "Siren",
     10: "Siren",
-    11: "Chime",
-    12: "Chime",
-    13: "Chime",
-    14: "Chime",
+    11: "Warning",
+    12: "Dinner",
+    13: "Breach",
+    14: "Warning",
 }
 
 # ── Per-product capability matrix ───────────────────────────────────────────

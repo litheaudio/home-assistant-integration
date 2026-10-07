@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.43] - 2026-10-07
+
+### Changed
+
+- Label PRO 2 chimes 11-14 as Warning, Dinner, Breach and Warning.
+- Show Spotify, No Source, Bluetooth and Aux in the player source chooser when
+  the speaker model supports them.
+- Add Save Current Track and named favourite playback entries to the source
+  chooser, and remove the misleading stock Home Assistant Join button.
+- Transfer the current official Spotify session when Spotify is selected and
+  request the LUCI AUX source when Aux is selected.
+
 ## [1.4.42] - 2026-10-07
 
 ### Fixed

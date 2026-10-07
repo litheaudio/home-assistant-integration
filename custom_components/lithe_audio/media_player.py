@@ -129,12 +129,18 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # MB#50 is feedback-only in the working C4 driver. Populated local
         # favourites are appended dynamically and use real playback commands.
         src_ids = PRODUCT_SOURCES.get(self._product, list(SOURCES.keys()))
-        # Only expose source actions that have a verified activation command.
-        # MB#50 values for Spotify, AirPlay, Cast, etc. are feedback-only and
-        # must not be presented as if HA can start those services directly.
-        self._source_list = ["No Source"]
+        # Keep the stock player source menu focused on the four sources users
+        # can meaningfully select from this integration. Spotify is activated
+        # through HA's official Spotify player; local inputs use their Lithe
+        # control paths.
+        self._source_list = []
+        if 4 in src_ids:
+            self._source_list.append("Spotify")
+        self._source_list.append("No Source")
         if 19 in src_ids:
             self._source_list.append("Bluetooth")
+        if 13 in src_ids:
+            self._source_list.append("Aux")
         # Reverse-lookup name → id (still includes AUX/SPDIF/BT so
         # Browse Media can switch to them and source_name still
         # displays them when they activate themselves)
@@ -185,13 +191,6 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             | MediaPlayerEntityFeature.SHUFFLE_SET
             | MediaPlayerEntityFeature.REPEAT_SET
             | MediaPlayerEntityFeature.SELECT_SOUND_MODE
-            # GROUPING enables HA's stock "Group" icon (4th round button)
-            # in the more-info dialog. When the user opens it, HA shows
-            # a checklist of other media_players to add to the group.
-            # We translate that selection into Cast group routing: the
-            # picked target becomes our active_cast_group and subsequent
-            # play_media calls forward through it.
-            | MediaPlayerEntityFeature.GROUPING
         )
         # MEDIA_ANNOUNCE was added in HA 2022.12 — guard the import
         ann = getattr(MediaPlayerEntityFeature, "MEDIA_ANNOUNCE", None)
@@ -258,29 +257,28 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # routing (when active) is reflected in the dedicated Cast Group
         # select entity (see select.py), not here, so the dropdown
         # selection always matches a list entry.
-        return self._client.state.source_name
+        source_name = self._client.state.source_name
+        return "Aux" if source_name == "AUX In" else source_name
 
     @property
     def source_list(self) -> list[str]:
         """Selectable destinations in the source dropdown.
 
         Sections:
-          1. Local inputs (USB/AUX/SPDIF/Bluetooth/Direct URL/legacy
-             Favourites entry that triggers the speaker's native source).
-          2. Saved favourites — each populated slot 1-9 shows as
+          1. Spotify, No Source, Bluetooth and Aux when supported.
+          2. Save Current Track, using the selected favourite slot.
+          3. Saved favourites — each populated slot shows as
              "♥ Favourite N: <name>" and plays directly when picked.
-
-        Cast groups are now reached via the 4th icon (Group button) in
-        the player card, not through this dropdown — HA's stock player
-        renders that icon because we enable the GROUPING feature flag.
         """
         base = list(self._source_list)
 
         # Keep an externally-owned current source visible in the selector even
         # though re-selecting it cannot launch that provider from LUCI.
-        current = self._client.state.source_name
+        current = self.source
         if current and current not in base:
             base.insert(0, current)
+
+        base.append("♥ Save Current Track")
 
         # Favourites — each saved one inline so user can pick directly
         try:
@@ -680,10 +678,12 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
     async def async_select_source(self, source: str) -> None:
         """Switch source by friendly name. Handles:
+          - Spotify → transfer the official Spotify session to this speaker
           - No Source → release the current audio path with MB#50
           - Bluetooth → start the speaker's Bluetooth service
+          - Aux → request the AUX input with MB#50
+          - Save Current Track → save into the selected favourite slot
           - "♥ Favourite N: <name>" → plays saved favourite N
-        Cast groups are reached via the Group icon now, not this dropdown.
         """
         # HA can submit the currently selected app-owned source. It is already
         # active and has no LUCI launch command, so treat this as a no-op.
@@ -700,6 +700,54 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             await self._client.async_bluetooth(BT_ON)
             await asyncio.sleep(0.5)
             await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
+            return
+
+        if source == "Aux" and "Aux" in self._source_list:
+            await self._client._send(0x02, MB_SOURCE, "13")  # noqa: SLF001
+            await asyncio.sleep(0.3)
+            await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
+            return
+
+        if source == "Spotify" and "Spotify" in self._source_list:
+            spotify_entities = self._spotify_entity_ids()
+            if not spotify_entities:
+                _LOGGER.warning(
+                    "select_source: Spotify is not loaded in Home Assistant"
+                )
+                return
+            spotify_entity_id = spotify_entities[0]
+            target = self._spotify_target(spotify_entity_id)
+            if target is None:
+                _LOGGER.warning(
+                    "select_source: no Spotify Connect target matches %s",
+                    self.name,
+                )
+                return
+            await self.hass.services.async_call(
+                MEDIA_PLAYER_DOMAIN,
+                "select_source",
+                {"entity_id": spotify_entity_id, "source": target},
+                blocking=True,
+                context=self._context,
+            )
+            return
+
+        if source == "♥ Save Current Track":
+            from .local_favs import (
+                async_capture_current_favourite,
+                get_local_favs,
+            )
+            manager = get_local_favs(self.hass)
+            if manager is None:
+                _LOGGER.warning("Cannot save favourite: manager not initialised")
+                return
+            slot = int(getattr(self._client, "_favourite_save_slot", 1) or 1)
+            slot = await async_capture_current_favourite(
+                manager, self._client, slot
+            )
+            self._client._favourite_save_slot = slot
+            self._client._heart_last_slot = slot  # type: ignore[attr-defined]
+            self.async_write_ha_state()
             return
 
         # ── Favourite picker ──────────────────────────────────────────
