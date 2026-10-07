@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 import aiohttp
@@ -32,8 +32,11 @@ import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_change
+from homeassistant.util import dt as dt_util
 
-from .const import ALADHAN_URL, DATA_PRAYER, DATA_TANNOY_SAVED, DOMAIN, PRAYER_NAMES
+from .const import (
+    ALADHAN_URL, DATA_PRAYER, DATA_PRAYER_STATE, DOMAIN, PRAYER_NAMES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,12 +129,18 @@ class PrayerScheduler:
             _LOGGER.info("Prayer times for %s/%s: %s", city, country, times)
 
         # Stash today's times so the Options Flow "View schedule" can display them
-        prayer_data = self.hass.data.setdefault(DOMAIN, {}).setdefault("prayer", {})
+        # Scheduler lifecycle and display state must use separate slots.
+        # DATA_PRAYER contains this PrayerScheduler object; older code then
+        # tried to mutate it as a dict at midnight and stopped rescheduling.
+        prayer_data = self.hass.data.setdefault(DOMAIN, {}).setdefault(
+            DATA_PRAYER_STATE, {}
+        )
         prayer_data["times"] = times
         prayer_data["last_fetch_city"] = city
         prayer_data["last_fetch_country"] = country
 
-        dow = date.today().weekday()
+        # Use Home Assistant's configured timezone, not the host OS date.
+        dow = dt_util.now().weekday()
 
         for entry in entries:
             prayer   = (entry.get("prayer") or "").lower()
@@ -143,8 +152,18 @@ class PrayerScheduler:
 
             hhmm = times.get(prayer) if prayer else fixed
             if not hhmm or len(hhmm) < 4:
+                _LOGGER.warning(
+                    "Prayer %s was not scheduled because no time was resolved",
+                    prayer or "fixed",
+                )
                 continue
             if not _day_matches(days, dow):
+                continue
+            if not str(url).strip():
+                _LOGGER.error(
+                    "Prayer %s was not scheduled because its audio URL is blank",
+                    prayer or "fixed",
+                )
                 continue
 
             try:
@@ -169,23 +188,25 @@ class PrayerScheduler:
             )
 
     async def _fire(self, entry: dict[str, Any]) -> None:
-        """Trigger the tannoy notify service for this prayer entry."""
+        """Trigger the real Lithe tannoy service and await playback setup."""
         try:
             await self.hass.services.async_call(
-                "notify",
-                "lithe_tannoy",
+                DOMAIN,
+                "tannoy",
                 {
                     "message": entry["url"],
-                    "data": {
-                        "mode":     "start",
-                        "volume":   int(entry["volume"]),
-                        "speakers": entry["speakers"],
-                    },
+                    "mode":     "start",
+                    "volume":   int(entry["volume"]),
+                    "speakers": entry["speakers"],
                 },
-                blocking=False,
+                blocking=True,
+            )
+            _LOGGER.info(
+                "Prayer playback started on %s: %s",
+                entry["speakers"], entry["url"],
             )
         except Exception as e:
-            _LOGGER.error("Prayer fire failed: %s", e)
+            _LOGGER.exception("Prayer playback failed: %s", e)
 
 
 async def async_register_prayer_service(hass: HomeAssistant) -> None:

@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.39] - 2026-10-07
+
+### Fixed
+
+- Reinstate the PRO 2 High Pass Frequency selector with 60, 80, 100 and
+  120 Hz choices alongside the separate High Pass Filter on/off switch.
+- Restore and reapply the last confirmed PRO 2 Loudness Gain after startup
+  when firmware omits gain subcommand `0x34` from its MB#112 state report.
+- Prepare alarm playback by explicitly unmuting the hardware audio path,
+  pausing an active stream when required, setting volume, and rejecting
+  empty URL alarms with a clear log message.
+- Run scheduled and test call-to-prayer playback through the blocking
+  `lithe_audio.tannoy` service so target, URL and playback errors are logged
+  instead of being lost through the legacy fire-and-forget notify wrapper.
+- Schedule prayer days using Home Assistant's configured local timezone.
+- Keep the live PrayerScheduler object separate from its displayed prayer
+  times. The previous shared `hass.data` key broke the next midnight refresh
+  and could also break the Prayer options screen.
+
 ## [1.4.38] - 2026-10-07
 
 ### Fixed

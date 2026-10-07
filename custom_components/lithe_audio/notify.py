@@ -90,10 +90,10 @@ async def _tannoy_start(
             "source":     client.state.source_id,
         }
 
-        # Pause + unmute + raise volume
+        # Pause + unmute + raise volume. Send UNMUTE unconditionally because
+        # the MCU can boot muted before LUCI has emitted its first MB#63 state.
         try:
-            if client.state.muted:
-                await client.async_mute(False)
+            await client.async_mute(False)
             if client.state.play_state == "playing":
                 await client.async_pause()
             await asyncio.sleep(0.15)
@@ -220,4 +220,3 @@ def register_tannoy_service(hass: HomeAssistant) -> None:
         hass.services.async_register("notify", "lithe_tannoy", svc_notify_tannoy)
     except Exception as e:
         _LOGGER.debug("Could not register notify.lithe_tannoy: %s", e)
-

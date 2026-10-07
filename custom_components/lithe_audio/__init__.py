@@ -383,7 +383,7 @@ async def _apply_prayer_options(hass: HomeAssistant, entry: ConfigEntry) -> None
                 "method":  int(prayer_cfg.get("method", 2)),
                 "entries": entries_list,
             },
-            blocking=False,
+            blocking=True,
         )
         _LOGGER.info(
             "Applied Prayer Schedule for %s — %d entries",

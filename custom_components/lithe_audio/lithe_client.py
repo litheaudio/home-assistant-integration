@@ -97,7 +97,7 @@ class SpeakerState:
     dsp_mid:       int | None = None  # 0x09 field 0x04: signed -5..+5
     dsp_treble:    int | None = None  # 0x09 field 0x02: signed -5..+5
     dsp_loudness:  int | None = None  # 0x0B: 0=OFF 1=ON
-    dsp_loudness_gain: int | None = None  # TX 0x16 / RX 0x34: -10..+10 dB
+    dsp_loudness_gain: int | None = None  # MB112 subcommand 0x34: -10..+10 dB
     dsp_nightmode: int | None = None  # 0x0C: 0=OFF 1=ON
     dsp_balance:   int | None = None  # 0x0E: signed -6..+6
     dsp_output:    int | None = None  # 0x0F: 0=Mono 1=Stereo 2=Left 3=Right

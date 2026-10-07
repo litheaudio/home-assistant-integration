@@ -162,6 +162,20 @@ class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
         try:
             self._value = max(-10, min(10, int(float(last_state.state))))
         except (TypeError, ValueError):
+            return
+
+        # PRO 2 firmware does not consistently include subcommand 0x34 in
+        # its startup settings report. In that case Home Assistant's restored
+        # value is the only confirmed setting available, so reapply it to the
+        # MCU instead of presenting a misleading 0 dB default.
+        self._client.state.dsp_loudness_gain = self._value
+        try:
+            await self._client.async_dsp_command(
+                DSP_LOUDNESS_GAIN, loudness_gain_to_wire(self._value)
+            )
+        except Exception:
+            # Keep the restored UI value; the normal coordinator reconnect
+            # path will make the control available for a later retry.
             pass
 
     @property

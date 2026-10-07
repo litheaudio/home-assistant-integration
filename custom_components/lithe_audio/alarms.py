@@ -408,7 +408,7 @@ class LitheAlarmManager:
         favourite_slot: int | None = None
 
         if source == SOURCE_PRESET:
-            url = alarm.get("preset_url")
+            url = (alarm.get("preset_url") or "").strip()
         elif source == SOURCE_URL:
             url = (alarm.get("custom_url") or "").strip()
         elif source == SOURCE_CHIME:
@@ -443,13 +443,32 @@ class LitheAlarmManager:
             )
             return
 
-        # Set initial volume (fade target if fading, full if not)
+        if source in (SOURCE_PRESET, SOURCE_URL) and not url:
+            _LOGGER.error(
+                "Alarm %s has URL source %r but no audio URL",
+                alarm.get("id"), source,
+            )
+            return
+
+        # Wake the hardware audio path before setting volume. Do this even
+        # when cached mute state says unmuted: after a speaker power cycle the
+        # MCU can remain muted before the first MB#63 state broadcast arrives.
         start_vol = 0 if fade_seconds > 0 else volume
         for c in coords:
             try:
+                await c.client.async_mute(False)
+                if (
+                    source in (SOURCE_PRESET, SOURCE_URL, SOURCE_FAVOURITE)
+                    and c.client.state.play_state == "playing"
+                ):
+                    await c.client.async_pause()
+                    await asyncio.sleep(0.15)
                 await c.client.async_set_volume(start_vol)
             except Exception as e:
-                _LOGGER.warning("Volume set failed on %s: %s", c.client.host, e)
+                _LOGGER.warning(
+                    "Alarm audio preparation failed on %s: %s",
+                    c.client.host, e,
+                )
         for ent_id in media_player_entities:
             try:
                 await self.hass.services.async_call(

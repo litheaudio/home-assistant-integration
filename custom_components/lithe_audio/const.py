@@ -245,7 +245,7 @@ CHIME_NAMES = {
 #   chimes           — number of chime slots (0 = no chime buttons)
 #   eq_select        — EQ preset selector
 #   output_select    — Stereo/Mono/Left/Right selector
-#   highpass_select  — legacy PRO 2 frequency selector (not exposed)
+#   highpass_select  — PRO 2 high-pass frequency selector
 #   tuning_switch    — PRO 2 enclosure/open-back protection switch
 #   balance_number   — -6..+6 balance slider
 #   loudness_switch  — on/off loudness
@@ -256,7 +256,7 @@ PRODUCT_CAPS = {
         "chimes":           15,
         "eq_select":        True,
         "output_select":    True,
-        "highpass_select":  False,
+        "highpass_select":  True,
         "tuning_select":    False,
         "tuning_switch":    True,
         "balance_number":   True,
@@ -396,6 +396,7 @@ DATA_COORDINATOR = "coordinator"
 DATA_DEVICE_INFO = "device_info"
 DATA_TANNOY_SAVED = "tannoy_saved"
 DATA_PRAYER       = "prayer"
+DATA_PRAYER_STATE = "prayer_state"
 
 # ── Prayer scheduler ────────────────────────────────────────────────────────
 ALADHAN_URL = "https://api.aladhan.com/v1/timingsByCity"

@@ -893,14 +893,12 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                 # a pending async_create_task).
                 try:
                     await self.hass.services.async_call(
-                        "notify", "lithe_tannoy",
+                        DOMAIN, "tannoy",
                         {
                             "message": resolved_url,
-                            "data": {
-                                "mode":     "start",
-                                "volume":   int(user_input.get("default_volume", _DEFAULT_VOLUME)),
-                                "speakers": [host],
-                            },
+                            "mode":     "start",
+                            "volume":   int(user_input.get("default_volume", _DEFAULT_VOLUME)),
+                            "speakers": [host],
                         },
                         blocking=True,
                     )
@@ -939,7 +937,10 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         enabled_now = [p for p in PRAYER_NAMES_LIST if p in existing_entries]
 
         # Build today's prayer-time summary text shown above the form
-        prayer_state = self.hass.data.get(DOMAIN, {}).get("prayer", {}) or {}
+        from .const import DATA_PRAYER_STATE
+        prayer_state = self.hass.data.get(DOMAIN, {}).get(
+            DATA_PRAYER_STATE, {}
+        ) or {}
         times: dict[str, str] = prayer_state.get("times", {}) or {}
         if times:
             parts = []
@@ -1181,21 +1182,17 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                 volume = int(user_input.get("volume",
                                             opts.get("default_volume", _DEFAULT_VOLUME)))
                 host = self._entry.data.get("host")
-                # Fire-and-forget the tannoy notify with this speaker as target
+                # Await the same tannoy path used by the live schedule.
                 try:
-                    self.hass.async_create_task(
-                        self.hass.services.async_call(
-                            "notify", "lithe_tannoy",
-                            {
-                                "message": url,
-                                "data": {
-                                    "mode":     "start",
-                                    "volume":   volume,
-                                    "speakers": [host],
-                                },
-                            },
-                            blocking=False,
-                        )
+                    await self.hass.services.async_call(
+                        DOMAIN, "tannoy",
+                        {
+                            "message": url,
+                            "mode":     "start",
+                            "volume":   volume,
+                            "speakers": [host],
+                        },
+                        blocking=True,
                     )
                     _LOGGER.info(
                         "Prayer test: playing %s on %s at volume %d", url, host, volume,
@@ -1238,7 +1235,10 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
             return await self.async_step_init()
 
         # Pull current schedule state from the global prayer data store
-        prayer_state = self.hass.data.get(DOMAIN, {}).get("prayer", {}) or {}
+        from .const import DATA_PRAYER_STATE
+        prayer_state = self.hass.data.get(DOMAIN, {}).get(
+            DATA_PRAYER_STATE, {}
+        ) or {}
         times: dict[str, str] = prayer_state.get("times", {}) or {}
         host = self._entry.data.get("host")
 
