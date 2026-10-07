@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.34] - 2026-10-07
+
+### Fixed
+
+- Prevent the dynamic Favourite Save Slot selector from aborting the complete
+  select platform. EQ Preset, High Pass Frequency, Speaker Output and Cast
+  Group controls now load normally again.
+- Translate the PRO 2 Loudness Gain UI range from `-10..+10 dB` to the MCU's
+  required unsigned `0..20` table index before sending MB#112 subcommand
+  `0x16`. Keep the selected value stable while awaiting device feedback.
+
 ## [1.4.33] - 2026-10-07
 
 ### Fixed

@@ -11,7 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ_BANDS, DSP_MID_FIELD,
-    DSP_LOUDNESS_GAIN, DSP_TREBLE_FIELD, caps,
+    DSP_LOUDNESS_GAIN, DSP_TREBLE_FIELD, caps, loudness_gain_to_wire,
 )
 from .coordinator import LitheAudioCoordinator
 
@@ -173,5 +173,10 @@ class LitheLoudnessNumber(_LitheBaseNumber):
         import time
         self._value = max(-10, min(10, int(value)))
         self._optimistic_until = time.monotonic() + 5.0
-        await self._client.async_dsp_command(DSP_LOUDNESS_GAIN, self._value)
+        # The MCU SetLoudness routine accepts an unsigned 0..20 table index.
+        # Home Assistant presents the friendlier -10..+10 dB scale.
+        wire_value = loudness_gain_to_wire(self._value)
+        await self._client.async_dsp_command(DSP_LOUDNESS_GAIN, wire_value)
+        self._client.state.dsp_loudness_gain = self._value
+        self.coordinator.async_set_updated_data(self._client.state)
         self.async_write_ha_state()

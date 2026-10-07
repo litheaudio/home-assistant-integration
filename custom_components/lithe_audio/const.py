@@ -183,7 +183,7 @@ DSP_REMOTE_ID = 0x0000 # Required to reach the MCU/DSP; 0xAAAA only ACKs
 DSP_EQ_BANDS  = 0x09   # fields 06=Bass, 04=Mid, 02=Treble; values -5..+5
 DSP_EQ        = 0x0A   # 0=Normal, 1=Acoustic, 2=Jazz, 3=Pop, 4=Hip-Hop
 DSP_LOUDNESS  = 0x0B   # 0=OFF, 1=ON
-DSP_LOUDNESS_GAIN = 0x16  # PRO 2 signed -10..+10 dB
+DSP_LOUDNESS_GAIN = 0x16  # PRO 2 TX 0..20, representing -10..+10 dB
 DSP_LOUDNESS_GAIN_FEEDBACK = 0x34  # PRO 2 push 0..20, offset by +10
 DSP_NIGHTMODE = 0x0C   # 0=OFF, 1=ON
 DSP_BALANCE   = 0x0E   # signed -6..+6
@@ -197,6 +197,11 @@ DSP_TUNING    = 0x0D   # 0=13L enclosure, 1=open-back protection
 DSP_BASS_FIELD   = 0x06
 DSP_MID_FIELD    = 0x04
 DSP_TREBLE_FIELD = 0x02
+
+
+def loudness_gain_to_wire(value: int | float) -> int:
+    """Convert the -10..+10 dB UI scale to the MCU's 0..20 index."""
+    return max(-10, min(10, int(value))) + 10
 
 EQ_PRESETS  = ["Normal", "Acoustic", "Jazz", "Pop", "Hip-Hop"]
 OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]

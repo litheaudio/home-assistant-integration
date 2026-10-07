@@ -54,7 +54,8 @@ class _LitheBaseSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntity):
         super().__init__(coordinator)
         self._entry = entry
         self._client = coordinator.client
-        self._current: str = self._attr_options[0] if hasattr(self, '_attr_options') else ""
+        options = getattr(self, "_attr_options", ())
+        self._current: str = options[0] if options else ""
 
     @property
     def device_info(self) -> DeviceInfo:
