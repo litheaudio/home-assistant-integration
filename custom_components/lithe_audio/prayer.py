@@ -214,21 +214,44 @@ async def async_register_prayer_service(hass: HomeAssistant) -> None:
     from homeassistant.core import ServiceCall
 
     async def svc_set_prayer_schedule(call: ServiceCall) -> None:
-        # Tear down any existing schedule
-        existing: PrayerScheduler | None = hass.data.get(DOMAIN, {}).get(DATA_PRAYER)
+        schedules = hass.data.setdefault(DOMAIN, {}).setdefault(DATA_PRAYER, {})
+        # Migrate the old singleton shape without leaving callbacks active.
+        if isinstance(schedules, PrayerScheduler):
+            await schedules.async_shutdown()
+            schedules = {}
+            hass.data[DOMAIN][DATA_PRAYER] = schedules
+
+        schedule_id = str(call.data.get("schedule_id") or "__service__")
+        existing: PrayerScheduler | None = schedules.get(schedule_id)
         if existing:
             await existing.async_shutdown()
 
         scheduler = PrayerScheduler(hass, dict(call.data))
         await scheduler.async_setup()
-        hass.data.setdefault(DOMAIN, {})[DATA_PRAYER] = scheduler
+        schedules[schedule_id] = scheduler
 
     if not hass.services.has_service(DOMAIN, "set_prayer_schedule"):
         hass.services.async_register(DOMAIN, "set_prayer_schedule", svc_set_prayer_schedule)
 
 
 async def async_unload_prayer(hass: HomeAssistant) -> None:
-    sched: PrayerScheduler | None = hass.data.get(DOMAIN, {}).get(DATA_PRAYER)
-    if sched:
-        await sched.async_shutdown()
-        hass.data[DOMAIN].pop(DATA_PRAYER, None)
+    schedules = hass.data.get(DOMAIN, {}).get(DATA_PRAYER)
+    if isinstance(schedules, PrayerScheduler):
+        await schedules.async_shutdown()
+    elif isinstance(schedules, dict):
+        for scheduler in list(schedules.values()):
+            if isinstance(scheduler, PrayerScheduler):
+                await scheduler.async_shutdown()
+    hass.data.get(DOMAIN, {}).pop(DATA_PRAYER, None)
+
+
+async def async_remove_prayer_schedule(
+    hass: HomeAssistant, schedule_id: str
+) -> None:
+    """Remove one config entry's prayer schedule without affecting others."""
+    schedules = hass.data.get(DOMAIN, {}).get(DATA_PRAYER)
+    if not isinstance(schedules, dict):
+        return
+    scheduler = schedules.pop(schedule_id, None)
+    if isinstance(scheduler, PrayerScheduler):
+        await scheduler.async_shutdown()

@@ -86,12 +86,12 @@ play_chime:
   fields:
     chime_number:
       name: Chime Number
-      description: "Chime to play. PRO2: 1-15. V3/iO1: 1-10. PRO: 1-6."
+      description: "Chime to play. PRO2: 1-14. V3/iO1: 1-10. PRO: 1-6."
       required: true
       selector:
         number:
           min: 1
-          max: 15
+          max: 14
           mode: box
     method:
       name: Method
@@ -607,7 +607,7 @@ alarm_create:
               value: "preset"
             - label: "Saved Favourite (1-9)"
               value: "favourite"
-            - label: "Embedded Chime (1-10)"
+            - label: "Embedded Chime"
               value: "chime"
             - label: "Custom HTTP URL"
               value: "url"
@@ -630,13 +630,13 @@ alarm_create:
           mode: box
     chime_slot:
       name: Chime Slot
-      description: Embedded chime to play (1-10, used when source = chime).
+      description: Embedded chime to play (product-dependent, used when source = chime).
       required: false
       default: 1
       selector:
         number:
           min: 1
-          max: 10
+          max: 14
           mode: box
     custom_url:
       name: Custom URL

@@ -640,11 +640,11 @@ class LitheClient:
 
         Per LUCI v14.1 spec §6.45 (Tx_MB#80 Play Audio Index):
 
-            Command:  0xAAAA SET 80 NA <"play N">     where N is 1..10
+            Command:  0xAAAA SET 80 NA <"play N">     for single-digit slots
             Response: 0xAAAA SET 80 success/failure
                       data field = SUCCESS | NI | FILE_NOT_FOUND
               - SUCCESS         — valid play accepted, audio cue triggered
-              - NI              — index out of range (No Index, 1..10 only)
+              - NI              — index out of range
               - FILE_NOT_FOUND  — index valid but no audio file installed
 
         That's the complete host protocol. The working Control4 driver does
@@ -661,10 +661,9 @@ class LitheClient:
         away first (e.g. SET MB#50 to a local source). We don't
         auto-do this because it'd interrupt user-driven playback.
         """
-        # Per LUCI v14.1 spec §6.45: device supports up to 10 indexes.
-        # Higher values return NI from the speaker — cap here so we
-        # don't bother sending requests that will fail.
-        n = max(1, min(10, int(chime_number)))
+        # PRO 2 exposes 14 installed assets. Its parser accepts indexed
+        # commands for 1-9 and legacy asset names for two-digit slots.
+        n = max(1, min(14, int(chime_number)))
         now = asyncio.get_event_loop().time()
         sock_state = "no_writer" if self._writer is None else (
             "closing" if self._writer.is_closing() else "open"
@@ -688,10 +687,9 @@ class LitheClient:
 
         try:
             # PRO 2 firmware has two MB#80 cue parsers in circulation. Slots
-            # 1-9 use the current indexed command, while the older parser's
-            # two-digit path expects the embedded asset name for slot 10.
-            # This is also the payload used by the legacy working C4 driver.
-            payload = "song10.wav" if n == 10 else f"play {n}"
+            # 1-9 use the current indexed command; all two-digit slots use
+            # the legacy embedded asset name that made slot 10 reliable.
+            payload = f"song{n}.wav" if n >= 10 else f"play {n}"
             await self._send(0x02, MB_CHIME, payload)
             _LOGGER.info("CHIME-DIAG slot=%d MB#80 payload=%r", n, payload)
             self._last_chime_mbid = MB_CHIME

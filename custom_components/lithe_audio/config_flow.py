@@ -654,14 +654,20 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
             if preset_choice and patch["source"] == SOURCE_PRESET:
                 patch["preset_url"] = preset_choice
 
+            saved_alarm_id: str
             if editing:
                 await mgr.async_update_alarm(existing["id"], patch)
+                saved_alarm_id = existing["id"]
                 _LOGGER.info("Updated alarm %s via UI", existing["id"])
             else:
                 alarm = {**existing, **patch}
                 alarm.pop("id", None)  # let manager assign new id
-                aid = await mgr.async_add_alarm(alarm)
-                _LOGGER.info("Created alarm %s via UI", aid)
+                saved_alarm_id = await mgr.async_add_alarm(alarm)
+                _LOGGER.info("Created alarm %s via UI", saved_alarm_id)
+            if user_input.get("_action") == "save_test":
+                saved_alarm = mgr.get_alarm(saved_alarm_id)
+                if saved_alarm:
+                    await mgr._do_play(saved_alarm)  # noqa: SLF001
             return await self.async_step_alarms()
 
         # Render the form
@@ -719,7 +725,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         source_options = {
             SOURCE_PRESET:    "Preset URL (Adhan / Quran)",
             SOURCE_FAVOURITE: "Saved Favourite (1-9)",
-            SOURCE_CHIME:     "Embedded Chime (1-10)",
+            SOURCE_CHIME:     "Embedded Chime",
             SOURCE_URL:       "Custom HTTP URL",
         }
         chime_slot_max = max(
@@ -728,6 +734,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         )
         action_options = {
             "save":   "💾  Save",
+            "save_test": "▶  Save and test now",
         }
         if editing:
             action_options["delete"] = "🗑  Delete this alarm"

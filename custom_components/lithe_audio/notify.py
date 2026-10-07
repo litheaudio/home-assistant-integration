@@ -194,7 +194,8 @@ def register_tannoy_service(hass: HomeAssistant) -> None:
         else:
             _LOGGER.warning("Unknown tannoy mode: %s", mode)
 
-    hass.services.async_register(DOMAIN, "tannoy", svc_tannoy)
+    if not hass.services.has_service(DOMAIN, "tannoy"):
+        hass.services.async_register(DOMAIN, "tannoy", svc_tannoy)
 
     # Backwards-compat: also expose as notify.lithe_tannoy. The legacy
     # platform helper (BaseNotificationService) requires YAML config,
@@ -217,6 +218,9 @@ def register_tannoy_service(hass: HomeAssistant) -> None:
             await _tannoy_end(hass, speakers)
 
     try:
-        hass.services.async_register("notify", "lithe_tannoy", svc_notify_tannoy)
+        if not hass.services.has_service("notify", "lithe_tannoy"):
+            hass.services.async_register(
+                "notify", "lithe_tannoy", svc_notify_tannoy
+            )
     except Exception as e:
         _LOGGER.debug("Could not register notify.lithe_tannoy: %s", e)

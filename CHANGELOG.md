@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.42] - 2026-10-07
+
+### Fixed
+
+- Inline only Music Assistant's Artists, Albums, Tracks, Playlists, Radio
+  Stations, Podcasts and Audiobooks folders. Music Assistant's copies of
+  Camera, My Media, Radio Browser, Text-to-speech and image sources are now
+  ignored because the native Home Assistant media-source root adds them once.
+
+## [1.4.41] - 2026-10-07
+
+### Fixed
+
+- Recreate and re-register the alarm manager and its services after a full
+  integration reload. Previously the services were removed while the stale
+  manager remained, causing alarm management and scheduling to stop working.
+- Cancel the alarm manager's real Home Assistant event subscriptions during
+  shutdown, then create fresh callbacks when alarms are reloaded from storage.
+- Keep independent prayer schedulers per Lithe config entry so configuring or
+  reloading one speaker no longer replaces every other speaker's schedule.
+- Remove disabled or unloaded prayer schedules without disturbing schedules
+  belonging to other speakers.
+- Reset service-registration guards on final unload so Tannoy, announcements,
+  snapshots and other playback helpers return after an options reload.
+
+### Added
+
+- Add a `Save and test now` alarm action that exercises the same playback
+  configuration immediately before relying on its scheduled fire time.
+
+## [1.4.40] - 2026-10-07
+
+### Fixed
+
+- Persist and reapply the last confirmed PRO 2 High Pass Frequency and
+  Loudness Gain values after integration or speaker startup.
+- Make High Pass Frequency available only while the separate High Pass
+  Filter switch is on.
+
+### Added
+
+- Expose PRO 2 chime slots 11-14. Slots 10-14 use the working legacy
+  `songN.wav` MB#80 payload required by the firmware's two-digit parser.
+
 ## [1.4.39] - 2026-10-07
 
 ### Fixed

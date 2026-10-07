@@ -39,6 +39,7 @@ from .media_delegate import (
     choose_music_assistant_entity,
     decode_music_assistant_content,
     encode_music_assistant_content,
+    is_music_assistant_library_category,
 )
 from .spotify_bridge import (
     SPOTIFY_CONTENT_PREFIX,
@@ -1378,6 +1379,8 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                     ma_entity_id, None, None
                 )
                 for item in ma_root.children or []:
+                    if not is_music_assistant_library_category(item.title):
+                        continue
                     children.append(
                         self._wrap_music_assistant_browse(item, ma_entity_id)
                     )

@@ -27,7 +27,10 @@ from .alarms import (
     REPEAT_ONE_OFF, REPEAT_DAILY, REPEAT_WEEKLY, REPEAT_MONTHLY,
     async_setup_alarm_manager, get_manager,
 )
-from .prayer import async_register_prayer_service, async_unload_prayer
+from .prayer import (
+    async_register_prayer_service, async_remove_prayer_schedule,
+    async_unload_prayer,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -297,6 +300,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Alarm manager — single instance shared across config entries.
     if "alarms" not in hass.data.get(DOMAIN, {}):
         await async_setup_alarm_manager(hass)
+    if not hass.services.has_service(DOMAIN, "alarm_create"):
         _register_alarm_services(hass)
 
     # Group manager — single instance shared across config entries.
@@ -313,7 +317,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Tannoy / PA override service — register lithe_audio.tannoy AND
     # notify.lithe_tannoy (legacy callers).
-    if not hass.data.get(DOMAIN, {}).get("_tannoy_registered"):
+    if not hass.services.has_service(DOMAIN, "tannoy"):
         from .notify import register_tannoy_service
         register_tannoy_service(hass)
         hass.data[DOMAIN]["_tannoy_registered"] = True
@@ -352,11 +356,13 @@ async def _apply_prayer_options(hass: HomeAssistant, entry: ConfigEntry) -> None
     opts = entry.options or {}
     prayer_cfg = opts.get("prayer") or {}
     if not prayer_cfg.get("enabled"):
+        await async_remove_prayer_schedule(hass, entry.entry_id)
         return
 
     host = entry.data.get("host")
     entries_cfg = prayer_cfg.get("entries", {}) or {}
     if not entries_cfg:
+        await async_remove_prayer_schedule(hass, entry.entry_id)
         return
 
     # Convert UI per-prayer entries into the format set_prayer_schedule expects.
@@ -378,6 +384,7 @@ async def _apply_prayer_options(hass: HomeAssistant, entry: ConfigEntry) -> None
         await hass.services.async_call(
             DOMAIN, "set_prayer_schedule",
             {
+                "schedule_id": entry.entry_id,
                 "city":    prayer_cfg.get("city", "London"),
                 "country": prayer_cfg.get("country", "GB"),
                 "method":  int(prayer_cfg.get("method", 2)),
@@ -403,6 +410,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             coordinator: LitheAudioCoordinator = entry_data[DATA_COORDINATOR]
             await coordinator.async_shutdown()
 
+        await async_remove_prayer_schedule(hass, entry.entry_id)
+
         # If this was the last config entry, tear down shared services too
         has_other_entries = any(
             isinstance(v, dict) and DATA_COORDINATOR in v
@@ -410,6 +419,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         if not has_other_entries:
             await async_unload_prayer(hass)
+            alarm_mgr = bucket.pop("alarms", None)
+            if alarm_mgr:
+                await alarm_mgr.async_shutdown()
             for svc in (
                 "play_chime", "play_url", "play_favourite", "save_favourite",
                 "play_quran_juz", "play_adhan",
@@ -429,6 +441,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ):
                 if hass.services.has_service(DOMAIN, svc):
                     hass.services.async_remove(DOMAIN, svc)
+            # These guards must be reset alongside their services or the next
+            # config-entry setup skips registration after an options reload.
+            for flag in (
+                "_announce_registered", "_tannoy_registered",
+                "_snapshot_registered",
+            ):
+                bucket.pop(flag, None)
+            if hass.services.has_service("notify", "lithe_tannoy"):
+                hass.services.async_remove("notify", "lithe_tannoy")
     return unload_ok
 
 

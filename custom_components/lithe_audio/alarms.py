@@ -40,7 +40,7 @@ DAY_TOKENS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 # Source types for the alarm audio
 SOURCE_PRESET    = "preset"      # URL from ADHAN_PRESETS / QURAN_JUZ
 SOURCE_FAVOURITE = "favourite"   # speaker's saved favourite (1-9)
-SOURCE_CHIME     = "chime"       # embedded chime slot (1-10)
+SOURCE_CHIME     = "chime"       # embedded chime slot (product-dependent)
 SOURCE_URL       = "url"         # arbitrary HTTP(S) URL
 
 # Repeat modes
@@ -119,6 +119,11 @@ class LitheAlarmManager:
         await self._store.async_save({"alarms": self._alarms})
 
     async def async_shutdown(self) -> None:
+        for unsub in self._unsub.values():
+            try:
+                unsub()
+            except Exception:
+                pass
         for h in self._timers.values():
             h.cancel()
         for h in self._snoozes.values():
@@ -126,6 +131,7 @@ class LitheAlarmManager:
         for t in self._fade_tasks.values():
             t.cancel()
         self._timers.clear()
+        self._unsub.clear()
         self._snoozes.clear()
         self._fade_tasks.clear()
 
@@ -264,7 +270,10 @@ class LitheAlarmManager:
             return
         # Use HA's async_track_point_in_time so we honour daylight saving
         unsub = ev_helper.async_track_point_in_time(
-            self.hass, lambda _now: self.hass.async_create_task(self._fire(alarm_id)),
+            self.hass,
+            lambda _now, aid=alarm_id: self.hass.async_create_task(
+                self._fire(aid)
+            ),
             fire_at,
         )
         self._unsub[alarm_id] = unsub
@@ -299,6 +308,9 @@ class LitheAlarmManager:
     # ── Firing ────────────────────────────────────────────────────────
 
     async def _fire(self, alarm_id: str) -> None:
+        # This callback has fired; remove its stale unsubscribe handle before
+        # calculating and registering the next occurrence.
+        self._unsub.pop(alarm_id, None)
         alarm = self._alarms.get(alarm_id)
         if not alarm or not alarm.get("enabled"):
             return
@@ -307,7 +319,7 @@ class LitheAlarmManager:
         try:
             await self._do_play(alarm)
         except Exception as e:
-            _LOGGER.error("Alarm %s playback failed: %s", alarm_id, e)
+            _LOGGER.exception("Alarm %s playback failed: %s", alarm_id, e)
 
         # Disable one-off after firing
         if alarm.get("repeat") == REPEAT_ONE_OFF:

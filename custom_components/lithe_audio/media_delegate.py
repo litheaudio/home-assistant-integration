@@ -9,6 +9,30 @@ from collections.abc import Iterable
 
 MUSIC_ASSISTANT_CONTENT_PREFIX = "lithe_music_assistant://"
 
+MUSIC_ASSISTANT_LIBRARY_CATEGORIES = {
+    "artists",
+    "albums",
+    "tracks",
+    "playlists",
+    "radio",
+    "radiostations",
+    "podcasts",
+    "audiobooks",
+}
+
+
+def is_music_assistant_library_category(title: str | None) -> bool:
+    """Return whether an MA root item is a real audio-library category.
+
+    Music Assistant can include Home Assistant's generic media-source rows in
+    its own root. Those rows are appended separately from HA and must not be
+    inlined here or Camera/My Media/Radio Browser/TTS appear twice.
+    """
+    if not isinstance(title, str):
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", "", title.casefold())
+    return normalized in MUSIC_ASSISTANT_LIBRARY_CATEGORIES
+
 
 def encode_music_assistant_content(
     entity_id: str, content_id: str | None

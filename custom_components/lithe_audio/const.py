@@ -211,11 +211,9 @@ TUNING_OPTIONS = ["Enclosure Mode 13L", "Open Back Mode"]
 
 # ── Per-product chime counts ────────────────────────────────────────────────
 PRODUCT_CHIMES = {
-    # Per official LUCI v14.1 spec §6.45 (Tx_MB#80 Play Audio Index):
-    # "Device supports up to 10 indexes" (play 1 .. play 10).
-    # Earlier customer-facing API doc claimed 15 for PRO2; that's not
-    # what the wire protocol exposes — slots 11+ return NI (No Index).
-    PRODUCT_PRO2:  10,
+    # PRO 2 slots 10-14 use legacy embedded asset payloads (songN.wav)
+    # because its two-digit indexed parser does not accept "play N".
+    PRODUCT_PRO2:  14,
     PRODUCT_V3:    6,
     PRODUCT_IO1:   10,
     PRODUCT_V2:    0,
@@ -234,6 +232,10 @@ CHIME_NAMES = {
     8: "Siren",
     9: "Siren",
     10: "Siren",
+    11: "Chime",
+    12: "Chime",
+    13: "Chime",
+    14: "Chime",
 }
 
 # ── Per-product capability matrix ───────────────────────────────────────────
@@ -253,7 +255,7 @@ CHIME_NAMES = {
 #   bluetooth_switch — BT on/off + pair/disconnect (all products)
 PRODUCT_CAPS = {
     PRODUCT_PRO2: {
-        "chimes":           15,
+        "chimes":           14,
         "eq_select":        True,
         "output_select":    True,
         "highpass_select":  True,

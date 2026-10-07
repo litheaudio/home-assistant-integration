@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -136,7 +137,7 @@ class LitheOutputSelect(_LitheBaseSelect):
         self.async_write_ha_state()
 
 
-class LitheHighPassSelect(_LitheBaseSelect):
+class LitheHighPassSelect(_LitheBaseSelect, RestoreEntity):
     """PRO 2 high-pass frequency selector (MCU HOSTMCUSETTINGS 0x32)."""
 
     _attr_name = "Audio — High Pass Frequency"
@@ -148,6 +149,32 @@ class LitheHighPassSelect(_LitheBaseSelect):
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_highpass"
         self._current = HP_OPTIONS[0]
         self._optimistic_until: float = 0.0
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is None or last_state.state not in HP_OPTIONS:
+            return
+
+        # The MCU startup report can expose its boot default before the saved
+        # installation frequency is restored. Reapply the last confirmed HA
+        # state; later MB#112 pushes from the speaker/app still take priority.
+        self._current = last_state.state
+        idx = HP_OPTIONS.index(self._current)
+        self._client.state.dsp_highpass = idx
+        try:
+            await self._client.async_dsp_command(DSP_HIGHPASS, idx)
+        except Exception:
+            pass
+
+    @property
+    def available(self) -> bool:
+        # Frequency is meaningful only while open-back/high-pass protection
+        # is enabled by the separate High Pass Filter switch.
+        return (
+            self._client.state.connected
+            and self._client.state.dsp_tuning == 1
+        )
 
     @property
     def current_option(self) -> str:
@@ -164,6 +191,8 @@ class LitheHighPassSelect(_LitheBaseSelect):
         self._current = HP_OPTIONS[idx]
         self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_HIGHPASS, idx)
+        self._client.state.dsp_highpass = idx
+        self.coordinator.async_set_updated_data(self._client.state)
         self.async_write_ha_state()
 
 

@@ -154,8 +154,6 @@ class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        if self._client.state.dsp_loudness_gain is not None:
-            return
         last_state = await self.async_get_last_state()
         if last_state is None:
             return
@@ -164,10 +162,9 @@ class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
         except (TypeError, ValueError):
             return
 
-        # PRO 2 firmware does not consistently include subcommand 0x34 in
-        # its startup settings report. In that case Home Assistant's restored
-        # value is the only confirmed setting available, so reapply it to the
-        # MCU instead of presenting a misleading 0 dB default.
+        # PRO 2 firmware can report its boot default on subcommand 0x34 before
+        # restoring the last installation setting. Treat HA's last confirmed
+        # value as authoritative at integration startup and reapply it.
         self._client.state.dsp_loudness_gain = self._value
         try:
             await self._client.async_dsp_command(
