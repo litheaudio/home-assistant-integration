@@ -171,12 +171,12 @@ save_favourite:
   fields:
     slot:
       name: Slot
-      description: Favourite slot to save into (1-40).
+      description: Favourite slot to save into (1-10).
       required: true
       selector:
         number:
           min: 1
-          max: 40
+          max: 10
           mode: box
 
 play_quran_juz:
@@ -1035,13 +1035,13 @@ fav_save:
   fields:
     slot:
       name: Slot
-      description: Slot 1-9. Leave 0 to auto-pick the next free slot.
+      description: Slot 1-10. Leave 0 to auto-pick the next free slot.
       required: false
       default: 0
       selector:
         number:
           min: 0
-          max: 9
+          max: 10
           mode: box
     name:
       name: Name
@@ -1071,7 +1071,7 @@ fav_play:
       selector:
         number:
           min: 1
-          max: 9
+          max: 10
           mode: box
 
 fav_delete:
@@ -1084,12 +1084,12 @@ fav_delete:
       selector:
         number:
           min: 1
-          max: 9
+          max: 10
           mode: box
 
 fav_list:
   name: List HA Favourites
-  description: Returns all 9 favourite slots and their current contents.
+  description: Returns all 10 favourite slots and their current contents.
 
 # ── Snapshot / Restore (Sonos pattern) ────────────────────────────────────
 

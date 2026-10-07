@@ -35,7 +35,7 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.favourites_local"
 
-MAX_SLOTS = 9
+MAX_SLOTS = 10
 
 
 class LitheLocalFavourites:
@@ -79,7 +79,7 @@ class LitheLocalFavourites:
             listener()
 
     def list_all(self) -> list[dict[str, Any]]:
-        """Return slots 1-9 in order; empty slots are placeholders."""
+        """Return slots 1-10 in order; empty slots are placeholders."""
         result = []
         for s in range(1, MAX_SLOTS + 1):
             if s in self._slots:
@@ -121,7 +121,7 @@ class LitheLocalFavourites:
         self._notify()
 
     def next_free_slot(self, occupied_slots: set[int] | None = None) -> int:
-        """Return the lowest free slot (1-9). Wraps to 1 if all full."""
+        """Return the lowest free slot (1-10). Wraps to 1 if all full."""
         occupied_slots = occupied_slots or set()
         for s in range(1, MAX_SLOTS + 1):
             # A name-only entry is an alias waiting for content, not a used

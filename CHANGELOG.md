@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.32] - 2026-10-07
+
+### Added
+
+- Restore the PRO 2 loudness gain slider (`-10..+10 dB`) using the verified
+  `0x16` TX command and `0x34` offset feedback, available while Loudness is on.
+- Add a named Favourite Save Slot selector covering slots 1-10 and a Save
+  Name field tied to the selected slot.
+- Make Browse Media's Save Current Track entry expand into all ten named slots.
+- Detect loaded Music Assistant players in both the entity registry and the
+  live media-player component.
+
+### Changed
+
+- Present the PRO 2 `High Pass Filter` as a plain ON/OFF switch and rename the
+  frequency selector to High Pass Frequency.
+- Keep favourite play controls in slot order, displaying custom names as a
+  suffix such as `Play 1 — Oskar`.
+
+### Fixed
+
+- Load favourite storage before entity platforms so custom names are present
+  when Play controls and the save-slot selector are added to Home Assistant.
+- Remove obsolete per-slot Save buttons and the replaced Speaker Tuning select
+  from the entity registry during setup.
+
 ## [1.4.31] - 2026-10-06
 
 ### Fixed

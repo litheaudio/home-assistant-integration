@@ -11,7 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ_BANDS, DSP_MID_FIELD,
-    DSP_TREBLE_FIELD, caps,
+    DSP_LOUDNESS_GAIN, DSP_TREBLE_FIELD, caps,
 )
 from .coordinator import LitheAudioCoordinator
 
@@ -34,6 +34,8 @@ async def async_setup_entry(
         ))
     if c["balance_number"]:
         entities.append(LitheBalanceNumber(coordinator, entry))
+    if c["loudness_number"]:
+        entities.append(LitheLoudnessNumber(coordinator, entry))
 
     if entities:
         async_add_entities(entities)
@@ -127,4 +129,49 @@ class LitheBalanceNumber(_LitheBaseNumber):
         self._value = int(value)
         self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_BALANCE, self._value)
+        self.async_write_ha_state()
+
+
+class LitheLoudnessNumber(_LitheBaseNumber):
+    """PRO 2 loudness gain, enabled by the separate loudness switch."""
+
+    _attr_name = "Audio — Loudness Gain"
+    _attr_native_min_value = -10
+    _attr_native_max_value = 10
+    _attr_native_step = 1
+    _attr_native_unit_of_measurement = "dB"
+    _attr_mode = NumberMode.SLIDER
+    _attr_icon = "mdi:equalizer"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        # Preserve the original unique ID so an existing disabled loudness
+        # slider is revived rather than duplicated in the entity registry.
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_loudness"
+        self._value = 0
+        self._optimistic_until: float = 0.0
+
+    @property
+    def available(self) -> bool:
+        enabled = self._client.state.dsp_loudness
+        # The firmware does not provide a safe initial DSP settings dump.
+        # Keep the gain usable while state is unknown; once a 0/1 push or a
+        # local switch action is seen, strictly follow the loudness switch.
+        return super().available and (enabled is None or enabled != 0)
+
+    @property
+    def native_value(self) -> float:
+        import time
+        if time.monotonic() < self._optimistic_until:
+            return float(self._value)
+        value = getattr(self._client.state, "dsp_loudness_gain", None)
+        if value is not None:
+            return float(value)
+        return float(self._value)
+
+    async def async_set_native_value(self, value: float) -> None:
+        import time
+        self._value = max(-10, min(10, int(value)))
+        self._optimistic_until = time.monotonic() + 5.0
+        await self._client.async_dsp_command(DSP_LOUDNESS_GAIN, self._value)
         self.async_write_ha_state()

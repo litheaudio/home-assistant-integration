@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.31** — Applies editable favourite names to Save/Play controls, preserves aliases when saving, and adds Save Current Track to Browse Media.
+**Latest: 1.4.32** — Restores PRO 2 loudness gain, adds a plain ON/OFF high-pass switch, and adds explicit named favourite slot selection.
 
 ---
 
@@ -18,7 +18,7 @@ Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on po
 | 🔊 **Multi-room Groups** | Virtual group entities — play across multiple speakers simultaneously |
 | 🎙️ **Chimes & Tannoy** | 10-15 built-in chimes per model, doorbell ducking, TTS announcements |
 | 🎛️ **DSP / EQ** | Bass, mid, treble, balance, loudness, night mode, output mode |
-| ❤️ **Favourites 1-9** | Heart button auto-saves currently playing track to next free slot |
+| **Favourites 1-10** | Choose a named slot, edit its save name, then save the current track |
 | 🔵 **Bluetooth** | Pair / disconnect / status per speaker |
 | 🔧 **Diagnostics** | Firmware, MAC, RSSI, SSID, network mode, uptime sensors |
 
@@ -100,7 +100,7 @@ Click **Configure** (gear icon) for:
 |---|---|
 | `lithe_audio.play_chime` | Play built-in chime |
 | `lithe_audio.play_url` | Stream any HTTP URL |
-| `lithe_audio.play_favourite` | Play saved favourite (1-9) |
+| `lithe_audio.play_favourite` | Play saved favourite (1-10) |
 | `lithe_audio.play_quran_juz` | Play any of 30 Juz |
 | `lithe_audio.play_adhan` | Play Adhan from preset dropdown |
 | `lithe_audio.set_volume_preset` | Quick 0/20/40/60/80/100% |

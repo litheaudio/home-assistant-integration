@@ -97,6 +97,7 @@ class SpeakerState:
     dsp_mid:       int | None = None  # 0x09 field 0x04: signed -5..+5
     dsp_treble:    int | None = None  # 0x09 field 0x02: signed -5..+5
     dsp_loudness:  int | None = None  # 0x0B: 0=OFF 1=ON
+    dsp_loudness_gain: int | None = None  # TX 0x16 / RX 0x34: -10..+10 dB
     dsp_nightmode: int | None = None  # 0x0C: 0=OFF 1=ON
     dsp_balance:   int | None = None  # 0x0E: signed -6..+6
     dsp_output:    int | None = None  # 0x0F: 0=Mono 1=Stereo 2=Left 3=Right
@@ -1434,7 +1435,8 @@ class LitheClient:
             try:
                 from .const import (
                     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS,
-                    DSP_HIGHPASS, DSP_LOUDNESS, DSP_MID_FIELD, DSP_NIGHTMODE,
+                    DSP_HIGHPASS, DSP_LOUDNESS, DSP_LOUDNESS_GAIN,
+                    DSP_LOUDNESS_GAIN_FEEDBACK, DSP_MID_FIELD, DSP_NIGHTMODE,
                     DSP_OUTPUT, DSP_TREBLE_FIELD, DSP_TUNING,
                 )
 
@@ -1444,10 +1446,18 @@ class LitheClient:
                     return b
                 def _unsigned(b: int) -> int:
                     return b
+                def _loudness_gain_feedback(b: int) -> int:
+                    return b - 10
 
                 _DSP_MAP: dict[int, tuple[str, callable]] = {
                     DSP_EQ:        ("dsp_eq",        _unsigned),
                     DSP_LOUDNESS:  ("dsp_loudness",  _unsigned),
+                    DSP_LOUDNESS_GAIN: (
+                        "dsp_loudness_gain", _signed_8
+                    ),
+                    DSP_LOUDNESS_GAIN_FEEDBACK: (
+                        "dsp_loudness_gain", _loudness_gain_feedback
+                    ),
                     DSP_NIGHTMODE: ("dsp_nightmode", _unsigned),
                     DSP_BALANCE:   ("dsp_balance",   _signed_8),
                     DSP_OUTPUT:    ("dsp_output",    _unsigned),

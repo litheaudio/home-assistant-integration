@@ -14,6 +14,7 @@ from .const import (
     CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_CHIMES,
 )
 from .coordinator import LitheAudioCoordinator
+from .local_favs import MAX_SLOTS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,15 +34,11 @@ async def async_setup_entry(
     for slot in range(1, chime_count + 1):
         entities.append(LitheChimeButton(coordinator, entry, slot))
 
-    # Save-to-favourite buttons (slots 1-9) — press to save currently playing
-    for slot in range(1, 10):
-        entities.append(LitheSaveFavouriteButton(coordinator, entry, slot))
-
-    # Play-favourite buttons (slots 1-9) — press to play saved favourite.
+    # Play-favourite buttons (slots 1-10) — press to play saved favourite.
     # Looks up HA-side favourites first (more reliable than native MB#70
     # which fails with GENERIC_FAV_SAVE_FAIL on Direct URL streams), then
     # falls back to the speaker's onboard favourite.
-    for slot in range(1, 10):
+    for slot in range(1, MAX_SLOTS + 1):
         entities.append(LithePlayFavouriteButton(coordinator, entry, slot))
 
     # Heart button: saves current track to the NEXT free favourite slot.
@@ -195,7 +192,8 @@ class LitheSaveFavouriteButton(_LitheBaseButton):
         manager = self._favourite_manager
         favourite = manager.get(self._slot) if manager else None
         label = favourite.get("name") if favourite else None
-        return f"Favourites — Save {label or self._slot}"
+        suffix = f" — {label}" if label and label != f"Favourite {self._slot}" else ""
+        return f"Favourites — Save {self._slot}{suffix}"
 
     async def async_press(self) -> None:
         _LOGGER.info("Save to favourite slot %d pressed", self._slot)
@@ -228,7 +226,8 @@ class LithePlayFavouriteButton(_LitheBaseButton):
         manager = self._favourite_manager
         favourite = manager.get(self._slot) if manager else None
         label = favourite.get("name") if favourite else None
-        return f"Favourites — Play {label or self._slot}"
+        suffix = f" — {label}" if label and label != f"Favourite {self._slot}" else ""
+        return f"Favourites — Play {self._slot}{suffix}"
 
     async def async_press(self) -> None:
         _LOGGER.info("Play favourite slot %d pressed", self._slot)
@@ -258,7 +257,7 @@ class LithePlayFavouriteButton(_LitheBaseButton):
 
 
 class LitheHeartButton(_LitheBaseButton):
-    """♥ Heart button — saves current track to the next free favourite slot.
+    """Save current track to the slot selected by the dropdown.
 
     Press once to add the currently-playing track to favourites without
     needing to pick a slot. Auto-increments: first press writes slot 1,
@@ -267,7 +266,7 @@ class LitheHeartButton(_LitheBaseButton):
 
     Slot state is tracked on the client; the next free slot is determined
     by scanning the speaker's reported favourites list for the lowest
-    unused number 1-9.
+    unused number 1-10.
     """
 
     _attr_has_entity_name = True
@@ -275,11 +274,11 @@ class LitheHeartButton(_LitheBaseButton):
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_name = "Favourites — ♥ Save Current Track"
+        self._attr_name = "Favourites — Save Current Track"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_heart_save"
 
     def _next_free_slot(self) -> int:
-        """Find next free favourite slot (1-9). Wraps around after 9.
+        """Find next free favourite slot (1-10). Wraps around after 10.
 
         Uses HA-side favourites (not the speaker's MB#70 list) so the
         slot picker works even when nothing has been saved natively yet.
@@ -301,6 +300,8 @@ class LitheHeartButton(_LitheBaseButton):
             _LOGGER.warning("Heart button: local favourites manager not initialised")
             return
 
-        slot = self._next_free_slot()
+        slot = max(1, min(MAX_SLOTS, int(
+            getattr(self._client, "_favourite_save_slot", 1)
+        )))
         await async_capture_current_favourite(mgr, self._client, slot)
         self._client._heart_last_slot = slot  # type: ignore[attr-defined]

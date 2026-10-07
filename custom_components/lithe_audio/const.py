@@ -183,6 +183,8 @@ DSP_REMOTE_ID = 0x0000 # Required to reach the MCU/DSP; 0xAAAA only ACKs
 DSP_EQ_BANDS  = 0x09   # fields 06=Bass, 04=Mid, 02=Treble; values -5..+5
 DSP_EQ        = 0x0A   # 0=Normal, 1=Acoustic, 2=Jazz, 3=Pop, 4=Hip-Hop
 DSP_LOUDNESS  = 0x0B   # 0=OFF, 1=ON
+DSP_LOUDNESS_GAIN = 0x16  # PRO 2 signed -10..+10 dB
+DSP_LOUDNESS_GAIN_FEEDBACK = 0x34  # PRO 2 push 0..20, offset by +10
 DSP_NIGHTMODE = 0x0C   # 0=OFF, 1=ON
 DSP_BALANCE   = 0x0E   # signed -6..+6
 DSP_OUTPUT    = 0x0F   # 0=Mono, 1=Stereo, 2=Left, 3=Right
@@ -225,7 +227,7 @@ PRODUCT_CHIMES = {
 #   eq_select        — EQ preset selector
 #   output_select    — Stereo/Mono/Left/Right selector
 #   highpass_select  — PRO 2 high-pass filter selector
-#   tuning_select    — PRO 2 enclosure/open-back selector
+#   tuning_switch    — PRO 2 enclosure/open-back protection switch
 #   balance_number   — -6..+6 balance slider
 #   loudness_switch  — on/off loudness
 #   nightmode_switch — Night Mode on/off
@@ -236,8 +238,10 @@ PRODUCT_CAPS = {
         "eq_select":        True,
         "output_select":    True,
         "highpass_select":  True,
-        "tuning_select":    True,
+        "tuning_select":    False,
+        "tuning_switch":    True,
         "balance_number":   True,
+        "loudness_number":  True,
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
@@ -250,7 +254,9 @@ PRODUCT_CAPS = {
         "output_select":    True,
         "highpass_select":  False,
         "tuning_select":    False,
+        "tuning_switch":    False,
         "balance_number":   True,
+        "loudness_number":  False,
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
@@ -263,7 +269,9 @@ PRODUCT_CAPS = {
         "output_select":    True,
         "highpass_select":  False,
         "tuning_select":    False,
+        "tuning_switch":    False,
         "balance_number":   True,
+        "loudness_number":  False,
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
@@ -276,7 +284,9 @@ PRODUCT_CAPS = {
         "output_select":    True,
         "highpass_select":  False,
         "tuning_select":    False,
+        "tuning_switch":    False,
         "balance_number":   True,
+        "loudness_number":  False,
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
@@ -289,7 +299,9 @@ PRODUCT_CAPS = {
         "output_select":    True,
         "highpass_select":  False,
         "tuning_select":    False,
+        "tuning_switch":    False,
         "balance_number":   True,
+        "loudness_number":  False,
         "loudness_switch":  True,
         "nightmode_switch": True,
         "bluetooth_switch": True,
@@ -302,7 +314,9 @@ PRODUCT_CAPS = {
         "output_select":    False,
         "highpass_select":  False,
         "tuning_select":    False,
+        "tuning_switch":    False,
         "balance_number":   False,
+        "loudness_number":  False,
         "loudness_switch":  False,
         "nightmode_switch": False,
         "bluetooth_switch": True,    # BT on; no DSP for now
@@ -320,7 +334,9 @@ def caps(product: str) -> dict:
         "output_select":    False,
         "highpass_select":  False,
         "tuning_select":    False,
+        "tuning_switch":    False,
         "balance_number":   False,
+        "loudness_number":  False,
         "loudness_switch":  False,
         "nightmode_switch": False,
         "bluetooth_switch": False,

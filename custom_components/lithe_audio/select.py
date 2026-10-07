@@ -14,6 +14,7 @@ from .const import (
     EQ_PRESETS, HP_OPTIONS, OUT_OPTIONS, TUNING_OPTIONS, caps,
 )
 from .coordinator import LitheAudioCoordinator
+from .local_favs import MAX_SLOTS, get_local_favs
 
 
 async def async_setup_entry(
@@ -40,6 +41,7 @@ async def async_setup_entry(
     # one routes subsequent media playback through the Cast group's
     # media_player entity (Google's multi-room sync).
     entities.append(LitheCastGroupSelect(coordinator, entry))
+    entities.append(LitheFavouriteSaveSlotSelect(coordinator, entry))
 
     if entities:
         async_add_entities(entities)
@@ -136,7 +138,7 @@ class LitheOutputSelect(_LitheBaseSelect):
 class LitheHighPassSelect(_LitheBaseSelect):
     """PRO 2 high-pass frequency selector (MCU HOSTMCUSETTINGS 0x32)."""
 
-    _attr_name = "Audio — High Pass Filter"
+    _attr_name = "Audio — High Pass Frequency"
     _attr_options = HP_OPTIONS
     _attr_icon = "mdi:filter"
 
@@ -192,6 +194,61 @@ class LitheTuningSelect(_LitheBaseSelect):
         self._current = TUNING_OPTIONS[idx]
         self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_TUNING, idx)
+        self.async_write_ha_state()
+
+
+class LitheFavouriteSaveSlotSelect(_LitheBaseSelect):
+    """Choose the explicit favourite slot used by Save Current Track."""
+
+    _attr_name = "Favourites — Save Slot"
+    _attr_icon = "mdi:playlist-edit"
+    _attr_options: list[str] = []
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = (
+            f"{entry.data['host']}_{entry.entry_id}_fav_save_slot"
+        )
+        if not hasattr(self._client, "_favourite_save_slot"):
+            self._client._favourite_save_slot = 1
+        self._favourite_manager = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        manager = get_local_favs(self.hass)
+        if manager:
+            self._favourite_manager = manager
+            self.async_on_remove(manager.async_listen(self.async_write_ha_state))
+
+    def _name_for_slot(self, slot: int) -> str:
+        manager = self._favourite_manager
+        local = manager.get(slot) if manager else None
+        if local and local.get("name"):
+            return str(local["name"])
+        for favourite in self._client.state.favourites or []:
+            if int(favourite.get("slot", 0) or 0) == slot:
+                return str(favourite.get("name") or f"Favourite {slot}")
+        return f"Favourite {slot}"
+
+    @property
+    def options(self) -> list[str]:
+        return [
+            f"{slot}: {self._name_for_slot(slot)}"
+            for slot in range(1, MAX_SLOTS + 1)
+        ]
+
+    @property
+    def current_option(self) -> str:
+        slot = int(getattr(self._client, "_favourite_save_slot", 1))
+        return f"{slot}: {self._name_for_slot(slot)}"
+
+    async def async_select_option(self, option: str) -> None:
+        try:
+            slot = int(option.split(":", 1)[0])
+        except (TypeError, ValueError):
+            return
+        self._client._favourite_save_slot = max(1, min(MAX_SLOTS, slot))
+        self.coordinator.async_set_updated_data(self._client.state)
         self.async_write_ha_state()
 
 

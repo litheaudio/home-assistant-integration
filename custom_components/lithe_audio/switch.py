@@ -10,7 +10,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     BT_OFF, BT_ON, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
-    DSP_LOUDNESS, DSP_NIGHTMODE, caps,
+    DSP_LOUDNESS, DSP_NIGHTMODE, DSP_TUNING, caps,
 )
 from .coordinator import LitheAudioCoordinator
 
@@ -29,6 +29,8 @@ async def async_setup_entry(
         entities.append(LitheNightModeSwitch(coordinator, entry))
     if c["loudness_switch"]:
         entities.append(LitheLoudnessSwitch(coordinator, entry))
+    if c["tuning_switch"]:
+        entities.append(LitheHighPassProtectionSwitch(coordinator, entry))
     if c["bluetooth_switch"]:
         entities.append(LitheBluetoothSwitch(coordinator, entry))
     # Do not expose AUX/SPDIF switches through MB#50. The working C4 driver
@@ -122,13 +124,45 @@ class LitheLoudnessSwitch(_LitheBaseSwitch):
 
     async def async_turn_on(self, **kwargs) -> None:
         self._state = True
+        self._client.state.dsp_loudness = 1
         await self._client.async_dsp_command(DSP_LOUDNESS, 1)
+        self.coordinator.async_set_updated_data(self._client.state)
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
         self._state = False
+        self._client.state.dsp_loudness = 0
         await self._client.async_dsp_command(DSP_LOUDNESS, 0)
+        self.coordinator.async_set_updated_data(self._client.state)
         self.async_write_ha_state()
+
+
+class LitheHighPassProtectionSwitch(_LitheBaseSwitch):
+    """PRO 2 high-pass filter ON/OFF control."""
+
+    _attr_name = "Audio — High Pass Filter"
+    _attr_icon = "mdi:filter"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_tuning"
+
+    @property
+    def is_on(self) -> bool:
+        value = getattr(self._client.state, "dsp_tuning", None)
+        return value == 1 if value is not None else self._state
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._state = True
+        self._client.state.dsp_tuning = 1
+        await self._client.async_dsp_command(DSP_TUNING, 1)
+        self.coordinator.async_set_updated_data(self._client.state)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._state = False
+        self._client.state.dsp_tuning = 0
+        await self._client.async_dsp_command(DSP_TUNING, 0)
+        self.coordinator.async_set_updated_data(self._client.state)
 
 
 class LitheBluetoothSwitch(_LitheBaseSwitch):

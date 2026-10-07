@@ -65,7 +65,8 @@ _FAV_PREFIX = "lithe_fav://"
 # Internal content_id prefix for chimes
 _CHIME_PREFIX = "lithe_chime://"
 # Browse Media action for the same operation as the heart button.
-_SAVE_CURRENT_FAVOURITE = "lithe_action:save_current_favourite"
+_SAVE_FAVOURITE_FOLDER = "lithe_save_favourite"
+_SAVE_FAVOURITE_PREFIX = "lithe_action:save_favourite:"
 
 
 async def async_setup_entry(
@@ -812,7 +813,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             )
             return
 
-        if media_id == _SAVE_CURRENT_FAVOURITE:
+        if media_id.startswith(_SAVE_FAVOURITE_PREFIX):
             from .local_favs import (
                 async_capture_current_favourite,
                 get_local_favs,
@@ -821,7 +822,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             if manager is None:
                 _LOGGER.warning("Cannot save favourite: manager not initialised")
                 return
-            slot = await async_capture_current_favourite(manager, self._client)
+            try:
+                slot = int(media_id[len(_SAVE_FAVOURITE_PREFIX):])
+            except ValueError:
+                _LOGGER.warning("Invalid favourite save action: %s", media_id)
+                return
+            slot = await async_capture_current_favourite(
+                manager, self._client, slot
+            )
+            self._client._favourite_save_slot = slot
             self._client._heart_last_slot = slot  # type: ignore[attr-defined]
             return
 
@@ -1191,6 +1200,44 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         if media_content_id == "lithe_direct_url":
             return self._build_direct_url_folder()
 
+        if media_content_id == _SAVE_FAVOURITE_FOLDER:
+            from .local_favs import MAX_SLOTS, get_local_favs
+            manager = get_local_favs(self.hass)
+            name_overrides = {
+                int(item["slot"]): str(item["name"])
+                for item in (manager.list_all() if manager else [])
+                if item.get("name") and item["name"] != "(empty)"
+            }
+            native_names = {
+                int(item.get("slot", 0) or 0): str(
+                    item.get("name") or ""
+                )
+                for item in (self._client.state.favourites or [])
+            }
+            return BrowseMedia(
+                title="Save Current Track",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=_SAVE_FAVOURITE_FOLDER,
+                media_content_type="library",
+                can_play=False,
+                can_expand=True,
+                children=[
+                    BrowseMedia(
+                        title=(
+                            f"{slot}: "
+                            f"{name_overrides.get(slot) or native_names.get(slot) or f'Favourite {slot}'}"
+                        ),
+                        media_class=MediaClass.MUSIC,
+                        media_content_id=f"{_SAVE_FAVOURITE_PREFIX}{slot}",
+                        media_content_type=MediaType.MUSIC,
+                        can_play=True,
+                        can_expand=False,
+                    )
+                    for slot in range(1, MAX_SLOTS + 1)
+                ],
+                children_media_class=MediaClass.MUSIC,
+            )
+
         # A direct-url item: play immediately (handled by play_media)
         if media_content_id and media_content_id.startswith("lithe_url:"):
             url = media_content_id[len("lithe_url:"):]
@@ -1213,33 +1260,14 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # Build root: favourites + media sources
         children: list[BrowseMedia] = []
 
-        # Save action shown directly on this speaker's Browse Media page.
-        # The stock HA more-info transport row cannot be extended by a
-        # backend integration, so Browse Media is the supported UI surface.
-        next_slot = 1
-        next_name = "Favourite 1"
-        try:
-            from .local_favs import get_local_favs
-            manager = get_local_favs(self.hass)
-            if manager:
-                native_slots = {
-                    int(item.get("slot", 0) or 0)
-                    for item in (self._client.state.favourites or [])
-                }
-                next_slot = manager.next_free_slot(native_slots)
-                pending = manager.get(next_slot) or {}
-                next_name = str(
-                    pending.get("name") or f"Favourite {next_slot}"
-                )
-        except Exception as err:
-            _LOGGER.debug("Failed to build save-favourite action: %s", err)
+        # Expand to choose one of all ten named favourite destinations.
         children.append(BrowseMedia(
-            title=f"Save Current Track to {next_name}",
-            media_class=MediaClass.MUSIC,
-            media_content_id=_SAVE_CURRENT_FAVOURITE,
-            media_content_type=MediaType.MUSIC,
-            can_play=True,
-            can_expand=False,
+            title="Save Current Track",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=_SAVE_FAVOURITE_FOLDER,
+            media_content_type="library",
+            can_play=False,
+            can_expand=True,
         ))
 
         # 1a) HA-side favourites (saved by Heart button or fav_save service)
@@ -1456,6 +1484,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         """Find the Music Assistant duplicate for this physical speaker."""
         registry = er.async_get(self.hass)
         entities: list[tuple[str, str]] = []
+        seen: set[str] = set()
         for entry in registry.entities.values():
             if entry.domain != MEDIA_PLAYER_DOMAIN or entry.disabled_by is not None:
                 continue
@@ -1479,6 +1508,32 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             )
             if is_music_assistant:
                 entities.append((entry.entity_id, state.name))
+                seen.add(entry.entity_id)
+
+        # Newer/custom Music Assistant builds may have a loaded entity before
+        # (or without) the registry metadata used above. Inspect the actual
+        # media-player component as a second source of truth.
+        component = self.hass.data.get(MEDIA_PLAYER_DOMAIN)
+        loaded_entities = getattr(component, "entities", ()) if component else ()
+        for entity in loaded_entities:
+            entity_id = getattr(entity, "entity_id", "")
+            if not entity_id or entity_id in seen or entity_id == self.entity_id:
+                continue
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                continue
+            module_name = entity.__class__.__module__.casefold()
+            platform_name = str(getattr(entity, "platform", "")).casefold()
+            attributes = state.attributes
+            if (
+                "music_assistant" in module_name
+                or ".mass" in module_name
+                or platform_name in {"mass", "music_assistant"}
+                or "mass_player_type" in attributes
+                or "mass_player_id" in attributes
+            ):
+                entities.append((entity_id, state.name))
+                seen.add(entity_id)
 
         entry_title = self._entry.title.rsplit(" (", 1)[0]
         selected = choose_music_assistant_entity(

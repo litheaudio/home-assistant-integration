@@ -169,11 +169,11 @@
     },
     "save_favourite": {
       "name": "Save Current to Favourite",
-      "description": "Save currently-playing track to favourite slot 1-40.",
+      "description": "Save currently-playing track to favourite slot 1-10.",
       "fields": {
         "slot": {
           "name": "Slot",
-          "description": "Favourite slot (1-40)."
+          "description": "Favourite slot (1-10)."
         }
       }
     }

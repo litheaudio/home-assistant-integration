@@ -253,6 +253,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DATA_COORDINATOR: coordinator,
     }
 
+    # Favourite entities read names during async_added_to_hass, so storage
+    # must be loaded before forwarding entity platforms. The previous order
+    # left their manager permanently unset until the next full reload.
+    if "local_favs" not in hass.data.get(DOMAIN, {}):
+        from .local_favs import (
+            async_setup_local_favourites,
+            register_local_fav_services,
+        )
+        await async_setup_local_favourites(hass)
+        register_local_fav_services(hass)
+
+    # Remove entities superseded by the slot selector/save button workflow
+    # and the binary high-pass filter switch.
+    registry = er.async_get(hass)
+    obsolete_unique_ids = [
+        ("select", f"{host}_{entry.entry_id}_tuning"),
+        *(
+            ("button", f"{host}_{entry.entry_id}_save_fav_{slot}")
+            for slot in range(1, 11)
+        ),
+    ]
+    for entity_domain, unique_id in obsolete_unique_ids:
+        entity_id = registry.async_get_entity_id(
+            entity_domain, DOMAIN, unique_id
+        )
+        if entity_id:
+            registry.async_remove(entity_id)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _register_services(hass)
@@ -275,13 +303,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         from .announce import register_announce_services
         register_announce_services(hass)
         hass.data[DOMAIN]["_announce_registered"] = True
-
-    # Local (HA-side) favourites — works around firmware limitation
-    # where Direct URL streams cannot be saved as native favourites.
-    if "local_favs" not in hass.data.get(DOMAIN, {}):
-        from .local_favs import async_setup_local_favourites, register_local_fav_services
-        await async_setup_local_favourites(hass)
-        register_local_fav_services(hass)
 
     # Tannoy / PA override service — register lithe_audio.tannoy AND
     # notify.lithe_tannoy (legacy callers).
