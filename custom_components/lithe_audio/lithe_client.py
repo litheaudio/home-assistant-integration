@@ -24,7 +24,7 @@ from .const import (
     MUTE_OFF, MUTE_ON, NETWORK_STATUS, PLAY_STATES, SOURCES, TRANSPORT_NEXT,
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
-    DSP_REMOTE_ID,
+    DSP_REMOTE_ID, DSP_STATUS_ALL,
     product_from_model,
 )
 
@@ -329,6 +329,14 @@ class LitheClient:
         We previously tried removing these per a strict spec read and it
         broke track info / source display / play state, so they stay.
         """
+        # Firmware-backed, non-mutating MCU state request. The inner
+        # 00 03 00 15 01 record enters the subcommand-0x15 report path and
+        # broadcasts all current MB#112 settings, including Loudness,
+        # Night Mode, High Pass Filter and PRO 2 loudness gain.
+        if self.use_tls:
+            await self.async_dsp_refresh()
+            await asyncio.sleep(0.05)
+
         # Standard refresh — speaker responds to all of these
         for mb in (MB_DEVICE_NAME,      # 90  Device Name
                    MB_FIRMWARE,         # 5   Firmware Version
@@ -679,9 +687,13 @@ class LitheClient:
             return
 
         try:
-            # Send the documented chime command. Nothing else.
-            # Per LUCI spec §9.33, this is the complete protocol.
-            await self._send(0x02, MB_CHIME, f"play {n}")
+            # PRO 2 firmware has two MB#80 cue parsers in circulation. Slots
+            # 1-9 use the current indexed command, while the older parser's
+            # two-digit path expects the embedded asset name for slot 10.
+            # This is also the payload used by the legacy working C4 driver.
+            payload = "song10.wav" if n == 10 else f"play {n}"
+            await self._send(0x02, MB_CHIME, payload)
+            _LOGGER.info("CHIME-DIAG slot=%d MB#80 payload=%r", n, payload)
             self._last_chime_mbid = MB_CHIME
         except Exception as e:
             _LOGGER.warning("Chime send failed: %s", e)
@@ -703,17 +715,38 @@ class LitheClient:
                 # applied. Poll its web flag and repeat the POST once when the
                 # old value remains visible.
                 for attempt in range(2):
-                    timeout = aiohttp.ClientTimeout(total=5)
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.post(
-                            url, data={"Bluetooth": value}
-                        ) as response:
-                            body = await response.text()
-                            if response.status >= 400:
-                                raise RuntimeError(
-                                    "Bluetooth HTTP control failed "
-                                    f"({response.status}): {body[:120]}"
-                                )
+                    try:
+                        timeout = aiohttp.ClientTimeout(total=5)
+                        async with aiohttp.ClientSession(timeout=timeout) as session:
+                            async with session.post(
+                                url,
+                                data={"Bluetooth": value},
+                                headers={
+                                    "Cache-Control": "no-cache",
+                                    "Connection": "close",
+                                },
+                            ) as response:
+                                body = await response.text()
+                                if response.status >= 400:
+                                    raise RuntimeError(
+                                        "Bluetooth HTTP control failed "
+                                        f"({response.status}): {body[:120]}"
+                                    )
+                    except (
+                        aiohttp.ClientError,
+                        asyncio.TimeoutError,
+                        OSError,
+                        RuntimeError,
+                    ) as err:
+                        _LOGGER.warning(
+                            "Bluetooth %s HTTP control unavailable on %s: %s; "
+                            "using LUCI MB#209 fallback",
+                            command,
+                            self.host,
+                            err,
+                        )
+                        await self._async_bluetooth_luci_fallback(command, enabled)
+                        return
 
                     # Show the requested state immediately, but verify it
                     # before declaring the operation complete.
@@ -742,34 +775,38 @@ class LitheClient:
                             self.host,
                         )
 
-                if last_observed is not None:
-                    self._bluetooth_http_state_known = True
-                    self.state.bt_enabled = last_observed
-                    self.state.bt_status = (
-                        f"{value}_FAILED_CURRENT_"
-                        f"{'ON' if last_observed else 'OFF'}"
-                    )
-                    self._bluetooth_target = None
-                    self._bluetooth_target_until = 0.0
-                    self._notify()
-                    raise RuntimeError(
-                        f"Bluetooth {command} was not applied by {self.host}"
-                    )
-
-                # Some firmware omits getbtvalue. A successful POST is still
-                # the best available result, and the requested state remains
-                # protected from stale MB#210 READY packets.
+                # A stale web flag or missing getbtvalue is not proof that the
+                # POST failed. Embedded web pages are cached on some builds.
+                # Confirm the requested state through the live LUCI path and
+                # ask MB#210 to push its current Bluetooth status.
                 _LOGGER.warning(
-                    "Bluetooth %s accepted by %s but web state was unavailable",
+                    "Bluetooth %s HTTP state on %s was %s; applying LUCI "
+                    "MB#209 fallback",
                     command,
                     self.host,
+                    "unavailable" if last_observed is None else (
+                        "ON" if last_observed else "OFF"
+                    ),
                 )
-                self._bluetooth_target_until = time.monotonic() + 2.0
+                await self._async_bluetooth_luci_fallback(command, enabled)
                 return
 
         # Pairing and disconnect remain LUCI MB#209 operations; the HTTP
         # endpoint only defines service ON/OFF.
         await self._send(0x02, MB_BLUETOOTH, command)
+
+    async def _async_bluetooth_luci_fallback(
+        self, command: str, enabled: bool
+    ) -> None:
+        """Apply Bluetooth ON/OFF through LUCI when the web UI is unreliable."""
+        await self._send(0x02, MB_BLUETOOTH, command)
+        await asyncio.sleep(0.15)
+        await self._send(0x01, MB_BT_STATUS, "")
+        self.state.bt_enabled = enabled
+        self.state.bt_status = f"BLUETOOTH_{command}_LUCI"
+        self._bluetooth_target = enabled
+        self._bluetooth_target_until = time.monotonic() + 5.0
+        self._notify()
 
     @staticmethod
     def _parse_bluetooth_http_state(body: str) -> bool | None:
@@ -786,7 +823,13 @@ class LitheClient:
         try:
             timeout = aiohttp.ClientTimeout(total=2)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(f"http://{self.host}/") as response:
+                async with session.get(
+                    f"http://{self.host}/?bt_state={time.monotonic_ns()}",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "close",
+                    },
+                ) as response:
                     if response.status != 200:
                         return None
                     body = await response.text()
@@ -980,6 +1023,24 @@ class LitheClient:
                 "DSP TX sub=0x%02x field=0x%02x val=%d write FAILED: %s",
                 sub_mb, field, value, e,
             )
+
+    async def async_dsp_refresh(self) -> None:
+        """Request the MCU's complete current DSP settings report.
+
+        Firmware CR443GP_3713 dispatches subcommand 0x15 to a read-only
+        routine that emits 00 03 00 <subcommand> <value> records. This is the
+        same startup burst observed when the Lithe app opens its EQ screen.
+        """
+        sub = bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01])
+        header = struct.pack(
+            "<HBHBHH", DSP_REMOTE_ID, 0x02, MB_DSP, 0, 0x0000, len(sub)
+        )
+        packet = header + sub + b"\x00"
+        if not self._writer or self._writer.is_closing():
+            _LOGGER.debug("DSP state refresh skipped because writer is unavailable")
+            return
+        _LOGGER.debug("TX DSP MB#112 full-state request via subcommand 0x15")
+        await self._write_packet(packet)
 
     # ── Callbacks ──────────────────────────────────────────────────────────
 
@@ -1436,7 +1497,7 @@ class LitheClient:
                 from .const import (
                     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS,
                     DSP_HIGHPASS, DSP_LOUDNESS, DSP_LOUDNESS_GAIN,
-                    DSP_LOUDNESS_GAIN_FEEDBACK, DSP_MID_FIELD, DSP_NIGHTMODE,
+                    DSP_MID_FIELD, DSP_NIGHTMODE,
                     DSP_OUTPUT, DSP_TREBLE_FIELD, DSP_TUNING,
                 )
 
@@ -1456,9 +1517,6 @@ class LitheClient:
                     DSP_EQ:        ("dsp_eq",        _unsigned),
                     DSP_LOUDNESS:  ("dsp_loudness",  _boolean),
                     DSP_LOUDNESS_GAIN: (
-                        "dsp_loudness_gain", _loudness_gain_feedback
-                    ),
-                    DSP_LOUDNESS_GAIN_FEEDBACK: (
                         "dsp_loudness_gain", _loudness_gain_feedback
                     ),
                     DSP_NIGHTMODE: ("dsp_nightmode", _boolean),

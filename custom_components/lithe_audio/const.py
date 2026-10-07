@@ -183,8 +183,8 @@ DSP_REMOTE_ID = 0x0000 # Required to reach the MCU/DSP; 0xAAAA only ACKs
 DSP_EQ_BANDS  = 0x09   # fields 06=Bass, 04=Mid, 02=Treble; values -5..+5
 DSP_EQ        = 0x0A   # 0=Normal, 1=Acoustic, 2=Jazz, 3=Pop, 4=Hip-Hop
 DSP_LOUDNESS  = 0x0B   # 0=OFF, 1=ON
-DSP_LOUDNESS_GAIN = 0x16  # PRO 2 TX 0..20, representing -10..+10 dB
-DSP_LOUDNESS_GAIN_FEEDBACK = 0x34  # PRO 2 push 0..20, offset by +10
+DSP_LOUDNESS_GAIN = 0x34  # PRO 2 TX/RX 0..20, representing -10..+10 dB
+DSP_LOUDNESS_GAIN_FEEDBACK = DSP_LOUDNESS_GAIN
 DSP_NIGHTMODE = 0x0C   # 0=OFF, 1=ON
 DSP_BALANCE   = 0x0E   # signed -6..+6
 DSP_OUTPUT    = 0x0F   # 0=Mono, 1=Stereo, 2=Left, 3=Right
@@ -193,6 +193,7 @@ DSP_OUTPUT    = 0x0F   # 0=Mono, 1=Stereo, 2=Left, 3=Right
 # 0x32 calls the DSP frequency setter; 0x0D controls open-back protection.
 DSP_HIGHPASS  = 0x32   # 0=60Hz, 1=80Hz, 2=100Hz, 3=120Hz, 4=150Hz
 DSP_TUNING    = 0x0D   # 0=13L enclosure, 1=open-back protection
+DSP_STATUS_ALL = 0x15  # read-only MCU settings report trigger
 
 DSP_BASS_FIELD   = 0x06
 DSP_MID_FIELD    = 0x04

@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.38] - 2026-10-07
+
+### Fixed
+
+- Fall back to LUCI MB#209 `ON`/`OFF` when the speaker's Bluetooth HTTP
+  handler times out, rejects the request, or its web state cannot confirm the
+  change. Query MB#210 afterwards and protect the requested state from stale
+  status packets while the Bluetooth service starts or stops.
+- Prevent a stale cached `getbtvalue` from turning a successful Bluetooth
+  action into a Home Assistant service failure.
+
+## [1.4.37] - 2026-10-07
+
+### Fixed
+
+- Send PRO 2 chime slot 10 as the legacy working MB#80 payload
+  `song10.wav`. Its older firmware parser does not reliably handle the
+  two-digit indexed `play 10` form used by slots 1-9.
+
+## [1.4.36] - 2026-10-07
+
+### Fixed
+
+- Request the MCU's complete current settings report with the firmware-backed,
+  non-mutating MB#112 subcommand `0x15` during refresh. High Pass Filter,
+  Loudness, Night Mode and Loudness Gain now initialise from the speaker's
+  actual state instead of waiting for a later app change.
+- Send and receive PRO 2 Loudness Gain on subcommand `0x34`. Firmware
+  disassembly confirms `0x34` invokes `SetLoudness` with its `0..20` input;
+  the previous `0x16` write is routed to the unsupported-command path.
+
 ## [1.4.35] - 2026-10-07
 
 ### Fixed
