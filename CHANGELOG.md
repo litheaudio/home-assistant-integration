@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.56
+
+- Fix enabled one-off alarms with a blank date silently receiving no scheduler
+  callback. Existing alarms now fire at the next occurrence of their selected
+  time, and newly saved alarms persist that calculated date explicitly.
+
+## 1.4.55
+
+- Fix prayer, Adhan, Quran and tannoy playback resolving IPv4 speaker targets
+  as if they were Home Assistant entity IDs. This previously rejected every
+  IP address before sending a LUCI command.
+- Send Direct URL playback to every selected Lithe speaker instead of only
+  preparing all speakers and playing on the first one.
+- Verify each target's transition to Direct URL and identify the failed host
+  in Home Assistant logs when firmware does not switch its audio source.
+
 ## 1.4.54
 
 - Move the Spotify compatibility probe off Home Assistant's event loop, fixing

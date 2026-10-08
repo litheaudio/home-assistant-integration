@@ -11,7 +11,7 @@ Usage (via the modern lithe_audio.tannoy service):
         - media_player.deck_v3
 
 The service saves volume + play_state for each target speaker on `start`,
-pauses them, raises volume, then plays the URL on the first speaker. On
+pauses them, raises volume, then plays the URL on every speaker. On
 `end` it restores volume and resumes if the speaker was previously playing.
 
 Also registered as the legacy `notify.lithe_tannoy` service for
@@ -35,9 +35,11 @@ def _resolve_coordinator(
 ) -> LitheAudioCoordinator | None:
     """Resolve a speaker reference (IP or entity_id) to its coordinator."""
     bucket = hass.data.get(DOMAIN, {})
+    target = str(target).strip()
 
-    # Strip entity_id form (e.g. "media_player.foo" → look up its entry)
-    if "." in target:
+    # Resolve an actual HA entity ID through the entity registry. Do not use a
+    # generic dot check here: every IPv4 speaker address also contains dots.
+    if target.startswith("media_player."):
         try:
             from homeassistant.helpers import entity_registry as er
             ent_reg = er.async_get(hass)
@@ -70,7 +72,7 @@ async def _tannoy_start(
     the chance of Spotify Connect interfering with our PLAYITEM.
     """
     saved = hass.data[DOMAIN].setdefault(DATA_TANNOY_SAVED, {})
-    first_coord: LitheAudioCoordinator | None = None
+    resolved: list[LitheAudioCoordinator] = []
 
     for target in speakers:
         coord = _resolve_coordinator(hass, target)
@@ -100,32 +102,41 @@ async def _tannoy_start(
         except Exception as e:
             _LOGGER.error("Tannoy start failed for %s: %s", host, e)
 
-        if first_coord is None:
-            first_coord = coord
+        if coord not in resolved:
+            resolved.append(coord)
 
-    # Play the URL on the first speaker
-    if first_coord and url:
-        try:
-            await first_coord.client.async_play_url(url)
-            # Verify source actually became 17 (Direct URL)
-            await asyncio.sleep(1.5)
-            src = first_coord.client.state.source_id
+    # Every selected Lithe speaker needs its own Direct URL command. Previous
+    # versions prepared all targets but silently played only the first one.
+    if resolved and url:
+        successful: list[LitheAudioCoordinator] = []
+        for coord in resolved:
+            try:
+                await coord.client.async_play_url(url)
+                successful.append(coord)
+            except Exception as e:
+                _LOGGER.error(
+                    "Tannoy play_url failed on %s: %s", coord.client.host, e
+                )
+        if not successful:
+            raise RuntimeError("Tannoy: Direct URL playback failed on all targets")
+
+        # Verify the source transition after the client's metadata/source
+        # refresh has had time to complete.
+        await asyncio.sleep(1.5)
+        for coord in successful:
+            src = coord.client.state.source_id
             if src != 17:
                 _LOGGER.warning(
-                    "Tannoy: source did not switch to Direct URL "
-                    "(still source=%d). Announcement may not be audible. "
-                    "URL: %s",
-                    src, url,
+                    "Tannoy: %s did not switch to Direct URL "
+                    "(still source=%d); playback may not be audible: %s",
+                    coord.client.host, src, url,
                 )
             else:
                 _LOGGER.info(
-                    "Tannoy: source switched to Direct URL playing %s",
-                    url,
+                    "Tannoy: %s switched to Direct URL playing %s",
+                    coord.client.host, url,
                 )
-        except Exception as e:
-            _LOGGER.error("Tannoy play_url failed: %s", e)
-            raise
-    elif not first_coord:
+    elif not resolved:
         # No speakers could be resolved — raise so the caller knows
         # to fall back to direct URL playback instead of silent failure.
         raise RuntimeError(

@@ -20,6 +20,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
+from homeassistant.util import dt as dt_util
 
 from .const import (
     BUNDLED_CERT_KEY, BUNDLED_CERT_PEM,
@@ -545,7 +546,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                 days = ",".join(a.get("days", []) or [])
                 repeat_str = f"weekly [{days}]"
             elif repeat == "one_off":
-                repeat_str = f"once on {a.get('date','?')}"
+                repeat_str = f"once on {a.get('date') or 'next occurrence'}"
             elif repeat == "monthly":
                 repeat_str = f"day {a.get('day_of_month','?')}"
             else:
@@ -649,6 +650,23 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                     bool(user_input.get("sunrise_never_dim",
                                         existing.get("sunrise_never_dim", True))),
             }
+            if patch["repeat"] == REPEAT_ONE_OFF and not patch["date"]:
+                # A one-off alarm needs a concrete date. Resolve an omitted
+                # date to the next occurrence of the selected wall-clock time
+                # so an enabled alarm can never be saved without a timer.
+                try:
+                    hh, mm = map(int, str(patch["time"]).split(":")[:2])
+                    now = dt_util.now()
+                    fire = now.replace(
+                        hour=hh, minute=mm, second=0, microsecond=0
+                    )
+                    if fire <= now:
+                        from datetime import timedelta
+
+                        fire += timedelta(days=1)
+                    patch["date"] = fire.date().isoformat()
+                except (TypeError, ValueError):
+                    pass
             # If a preset selected via the dropdown, override preset_url
             preset_choice = (user_input.get("preset_choice") or "").strip()
             if preset_choice and patch["source"] == SOURCE_PRESET:

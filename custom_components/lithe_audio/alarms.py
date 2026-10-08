@@ -216,7 +216,12 @@ class LitheAlarmManager:
         if repeat == REPEAT_ONE_OFF:
             date_str = alarm.get("date")
             if not date_str:
-                return None
+                # Older UI versions allowed an enabled one-off alarm to be
+                # saved without a date. Treat that as the next occurrence of
+                # its wall-clock time instead of silently registering no
+                # callback at all.
+                fire = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                return fire if fire > now else fire + timedelta(days=1)
             try:
                 d = datetime.fromisoformat(date_str).date()
             except Exception:
