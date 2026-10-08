@@ -18,7 +18,7 @@ from .const import (
     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS, DSP_LOUDNESS,
     DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT, DSP_TREBLE_FIELD,
     EQ_PRESETS, LS9_PRODUCTS, OUT_OPTIONS, PRODUCT_CHIMES, PRODUCT_NAMES,
-    product_from_model,
+    caps, product_from_model,
 )
 from .coordinator import LitheAudioCoordinator
 from .lithe_client import LitheClient, LitheClientLS9
@@ -267,8 +267,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await async_setup_local_favourites(hass)
         register_local_fav_services(hass)
 
-    # Remove entities superseded by the slot selector/save button workflow
-    # and the binary high-pass filter switch.
+    # Remove entities superseded by the slot selector/save button workflow.
+    # Product-specific cleanup below also removes controls left in the entity
+    # registry by older releases when the current model does not support them.
     registry = er.async_get(hass)
     for registry_entry in list(registry.entities.values()):
         if (
@@ -278,12 +279,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             registry.async_remove(registry_entry.entity_id)
     obsolete_unique_ids = [
         ("select", f"{host}_{entry.entry_id}_tuning"),
-        ("select", f"{host}_{entry.entry_id}_highpass"),
         *(
             ("button", f"{host}_{entry.entry_id}_save_fav_{slot}")
             for slot in range(1, 11)
         ),
     ]
+    product_caps = caps(product)
+    if not product_caps["highpass_select"]:
+        obsolete_unique_ids.append(
+            ("select", f"{host}_{entry.entry_id}_highpass")
+        )
+    if not product_caps["tuning_switch"]:
+        obsolete_unique_ids.append(
+            ("switch", f"{host}_{entry.entry_id}_tuning")
+        )
+    if not product_caps["loudness_number"]:
+        obsolete_unique_ids.append(
+            ("number", f"{host}_{entry.entry_id}_loudness")
+        )
     for entity_domain, unique_id in obsolete_unique_ids:
         entity_id = registry.async_get_entity_id(
             entity_domain, DOMAIN, unique_id

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.44] - 2026-10-07
+
+### Fixed
+
+- Remove stale High Pass Filter, High Pass protection and Loudness Gain
+  entities from WiFi V3 devices after upgrading from an older release.
+- Preserve the working WiFi PRO 2 High Pass Filter and Loudness Gain entities
+  without deleting and recreating them during every integration reload.
+
 ## [1.4.43] - 2026-10-07
 
 ### Changed
