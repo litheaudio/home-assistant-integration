@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.45] - 2026-10-08
+
+### Fixed
+
+- Register Home Assistant as its own LUCI app instead of reusing the
+  `control4` app ID, preventing the two clients from replacing each other in
+  the speaker's MB112 push-registration table.
+- Decode the documented `All_informationGET` field IDs for Bass, Mid and
+  Treble so the startup DSP report populates the corresponding sliders.
+- Restore the last speaker-confirmed EQ, output, balance, high-pass and
+  loudness values as a temporary UI fallback while waiting for the startup
+  report.
+- Never transmit restored high-pass or loudness values during startup; the
+  speaker report remains authoritative.
+- Repair the partial-install freshness markers so current files are not
+  falsely reported as stale.
+
 ## [1.4.44] - 2026-10-07
 
 ### Fixed

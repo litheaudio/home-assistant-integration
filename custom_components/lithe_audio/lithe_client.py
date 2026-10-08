@@ -1524,8 +1524,13 @@ class LitheClient:
                     DSP_TUNING:    ("dsp_tuning",    _boolean),
                 }
                 _DSP_FIELD_MAP: dict[tuple[int, int], tuple[str, callable]] = {
+                    # All_informationGET returns getter field IDs 01/03/05.
+                    # App changes use setter IDs 02/04/06, so decode both.
+                    (DSP_EQ_BANDS, 0x05):             ("dsp_bass", _signed_8),
                     (DSP_EQ_BANDS, DSP_BASS_FIELD):   ("dsp_bass", _signed_8),
+                    (DSP_EQ_BANDS, 0x03):             ("dsp_mid", _signed_8),
                     (DSP_EQ_BANDS, DSP_MID_FIELD):    ("dsp_mid", _signed_8),
+                    (DSP_EQ_BANDS, 0x01):             ("dsp_treble", _signed_8),
                     (DSP_EQ_BANDS, DSP_TREBLE_FIELD): ("dsp_treble", _signed_8),
                 }
 
@@ -2054,13 +2059,15 @@ class LitheClient:
         return header + data + b"\x00"
 
     def _registration_payload(self) -> str:
-        """Return the registration format used by the working C4 driver."""
+        """Return a valid, uniquely identified LUCI push registration."""
         if not self.use_tls:
             return self.local_ip
         return json.dumps(
             {
                 "app_info": {
-                    "id": "control4",
+                    # Firmware indexes push clients by app ID. Sharing the
+                    # Control4 driver's ID makes MB#112 delivery intermittent.
+                    "id": "home-assistant",
                     "ip": self.local_ip,
                     "version": "1.0.0",
                 }

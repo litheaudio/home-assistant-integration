@@ -75,7 +75,7 @@ class _LitheBaseSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntity):
         self.async_write_ha_state()
 
 
-class LitheEqSelect(_LitheBaseSelect):
+class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
     """EQ Preset selector."""
 
     _attr_name = "Audio — EQ Preset"
@@ -87,6 +87,12 @@ class LitheEqSelect(_LitheBaseSelect):
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_eq"
         self._current = "Normal"
         self._optimistic_until: float = 0.0
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in EQ_PRESETS:
+            self._current = last_state.state
 
     @property
     def current_option(self) -> str:
@@ -106,7 +112,7 @@ class LitheEqSelect(_LitheBaseSelect):
         self.async_write_ha_state()
 
 
-class LitheOutputSelect(_LitheBaseSelect):
+class LitheOutputSelect(_LitheBaseSelect, RestoreEntity):
     """Speaker Output selector."""
 
     _attr_name = "Audio — Speaker Output"
@@ -118,6 +124,12 @@ class LitheOutputSelect(_LitheBaseSelect):
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_output"
         self._current = "Stereo"
         self._optimistic_until: float = 0.0
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in OUT_OPTIONS:
+            self._current = last_state.state
 
     @property
     def current_option(self) -> str:
@@ -156,16 +168,10 @@ class LitheHighPassSelect(_LitheBaseSelect, RestoreEntity):
         if last_state is None or last_state.state not in HP_OPTIONS:
             return
 
-        # The MCU startup report can expose its boot default before the saved
-        # installation frequency is restored. Reapply the last confirmed HA
-        # state; later MB#112 pushes from the speaker/app still take priority.
+        # Keep the last speaker-confirmed HA value visible until the MCU's
+        # All_informationGET report arrives. Never write restored UI state back
+        # to the speaker during startup.
         self._current = last_state.state
-        idx = HP_OPTIONS.index(self._current)
-        self._client.state.dsp_highpass = idx
-        try:
-            await self._client.async_dsp_command(DSP_HIGHPASS, idx)
-        except Exception:
-            pass
 
     @property
     def available(self) -> bool:

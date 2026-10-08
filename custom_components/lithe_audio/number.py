@@ -63,7 +63,7 @@ class _LitheBaseNumber(CoordinatorEntity[LitheAudioCoordinator], NumberEntity):
         self.async_write_ha_state()
 
 
-class LitheEqBandNumber(_LitheBaseNumber):
+class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
     """One of the three signed EQ bands carried by DSP sub-MB 0x09."""
 
     _attr_native_min_value = -5
@@ -81,6 +81,15 @@ class LitheEqBandNumber(_LitheBaseNumber):
         self._field = field
         self._value = 0
         self._optimistic_until: float = 0.0
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            try:
+                self._value = max(-5, min(5, int(float(last_state.state))))
+            except (TypeError, ValueError):
+                pass
 
     @property
     def native_value(self) -> float:
@@ -100,7 +109,7 @@ class LitheEqBandNumber(_LitheBaseNumber):
         self.async_write_ha_state()
 
 
-class LitheBalanceNumber(_LitheBaseNumber):
+class LitheBalanceNumber(_LitheBaseNumber, RestoreEntity):
     """Balance slider: -6 (full left) to +6 (full right)."""
 
     _attr_name = "Audio — Balance"
@@ -115,6 +124,15 @@ class LitheBalanceNumber(_LitheBaseNumber):
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_balance"
         self._value = 0
         self._optimistic_until: float = 0.0
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            try:
+                self._value = max(-6, min(6, int(float(last_state.state))))
+            except (TypeError, ValueError):
+                pass
 
     @property
     def native_value(self) -> float:
@@ -162,18 +180,8 @@ class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
         except (TypeError, ValueError):
             return
 
-        # PRO 2 firmware can report its boot default on subcommand 0x34 before
-        # restoring the last installation setting. Treat HA's last confirmed
-        # value as authoritative at integration startup and reapply it.
-        self._client.state.dsp_loudness_gain = self._value
-        try:
-            await self._client.async_dsp_command(
-                DSP_LOUDNESS_GAIN, loudness_gain_to_wire(self._value)
-            )
-        except Exception:
-            # Keep the restored UI value; the normal coordinator reconnect
-            # path will make the control available for a later retry.
-            pass
+        # UI fallback only. The fresh All_informationGET report is
+        # authoritative and must not be overwritten by stale HA state.
 
     @property
     def available(self) -> bool:

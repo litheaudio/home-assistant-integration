@@ -136,10 +136,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 pass
         # Critical-file freshness check via known markers in current code
         _expected_markers = {
-            "lithe_client.py": "Sniffer-confirmed mappings (2026-05-18)",
+            "lithe_client.py": '"id": "home-assistant"',
             "card_resource.py": "Probe filesystem in executor",
-            "switch.py": "2-way sync (factually verified 2026-05-18)",
-            "number.py": "2-way sync (factually verified 2026-05-18)",
+            "switch.py": "LitheHighPassProtectionSwitch",
+            "number.py": "LitheLoudnessNumber",
             "media_player.py": "_EXCLUDED_SOURCES",
         }
         _stale: list[str] = []
