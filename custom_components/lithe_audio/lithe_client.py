@@ -21,7 +21,8 @@ from .const import (
     MB_NOW_PLAYING, MB_PLAY_STATE, MB_PLAYBACK_AUTH, MB_PLAYBACK_GRANT,
     MB_POSITION, MB_TUNNEL_START,
     MB_REGISTER, MB_RSSI, MB_SOURCE, MB_TIMEZONE, MB_TRANSPORT, MB_VOLUME,
-    MUTE_OFF, MUTE_ON, NETWORK_STATUS, PLAY_STATES, SOURCES, TRANSPORT_NEXT,
+    MAX_CHIME_SLOT, MUTE_OFF, MUTE_ON, NETWORK_STATUS, PLAY_STATES, SOURCES,
+    TRANSPORT_NEXT,
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
     DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
@@ -712,7 +713,7 @@ class LitheClient:
         """
         # PRO 2 exposes 14 installed assets. Its parser accepts indexed
         # commands for 1-9 and legacy asset names for two-digit slots.
-        n = max(1, min(14, int(chime_number)))
+        n = max(1, min(MAX_CHIME_SLOT, int(chime_number)))
         now = asyncio.get_event_loop().time()
         sock_state = "no_writer" if self._writer is None else (
             "closing" if self._writer.is_closing() else "open"

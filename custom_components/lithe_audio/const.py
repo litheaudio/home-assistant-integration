@@ -13,6 +13,7 @@ CONF_KEY_PATH   = "key_path"
 # Default values
 DEFAULT_PORT = 7777
 DEFAULT_TLS  = True
+MAX_CHIME_SLOT = 14
 
 # ── Products ────────────────────────────────────────────────────────────────
 PRODUCT_PRO2   = "pro2"

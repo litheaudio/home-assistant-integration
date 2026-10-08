@@ -146,6 +146,17 @@ class LitheAlarmManager:
     def get_alarm(self, alarm_id: str) -> dict[str, Any] | None:
         return self._alarms.get(alarm_id)
 
+    def next_fire_time(self, alarm_id: str) -> datetime | None:
+        """Return the next calculated fire time for one saved alarm."""
+        alarm = self._alarms.get(alarm_id)
+        if not alarm or not alarm.get("enabled"):
+            return None
+        return self._next_fire_time(alarm)
+
+    def timer_registered(self, alarm_id: str) -> bool:
+        """Return whether Home Assistant currently holds this alarm timer."""
+        return alarm_id in self._unsub
+
     async def async_add_alarm(self, alarm: dict[str, Any]) -> str:
         if "id" not in alarm:
             alarm["id"] = new_alarm_id()
@@ -276,12 +287,11 @@ class LitheAlarmManager:
             _LOGGER.info("Alarm %s '%s' has no future fire time", alarm_id, alarm.get("name"))
             return
         # Use HA's async_track_point_in_time so we honour daylight saving
+        async def _alarm_due(_now: datetime) -> None:
+            await self._fire(alarm_id)
+
         unsub = ev_helper.async_track_point_in_time(
-            self.hass,
-            lambda _now, aid=alarm_id: self.hass.async_create_task(
-                self._fire(aid)
-            ),
-            fire_at,
+            self.hass, _alarm_due, fire_at,
         )
         self._unsub[alarm_id] = unsub
         _LOGGER.info(
@@ -296,12 +306,11 @@ class LitheAlarmManager:
             ramp_minutes = int(alarm.get("sunrise_minutes", 20))
             ramp_start_at = fire_at - timedelta(minutes=ramp_minutes)
             if ramp_start_at > dt_util.now():
+                async def _sunrise_due(_now: datetime) -> None:
+                    await self._fire_sunrise(alarm_id)
+
                 ramp_unsub = ev_helper.async_track_point_in_time(
-                    self.hass,
-                    lambda _now, aid=alarm_id: self.hass.async_create_task(
-                        self._fire_sunrise(aid)
-                    ),
-                    ramp_start_at,
+                    self.hass, _sunrise_due, ramp_start_at,
                 )
                 # Stash under a sunrise-specific key so it doesn't collide
                 # with the main fire unsub.
@@ -577,9 +586,11 @@ class LitheAlarmManager:
         # Cancel any prior snooze
         if alarm_id in self._snoozes:
             self._snoozes.pop(alarm_id)()
+        async def _snooze_due(_now: datetime) -> None:
+            await self._fire(alarm_id)
+
         unsub = ev_helper.async_track_point_in_time(
-            self.hass, lambda _now: self.hass.async_create_task(self._fire(alarm_id)),
-            fire_at,
+            self.hass, _snooze_due, fire_at,
         )
         self._snoozes[alarm_id] = unsub
         _LOGGER.info("Alarm %s snoozed for %d min (fire at %s)", alarm_id, m, fire_at.isoformat())
@@ -640,7 +651,27 @@ def get_manager(hass: HomeAssistant) -> LitheAlarmManager | None:
 
 async def async_setup_alarm_manager(hass: HomeAssistant) -> LitheAlarmManager:
     """Create the singleton alarm manager and load persisted alarms."""
-    mgr = LitheAlarmManager(hass)
-    await mgr.async_load()
-    hass.data.setdefault(DOMAIN, {})["alarms"] = mgr
-    return mgr
+    bucket = hass.data.setdefault(DOMAIN, {})
+    existing = bucket.get("alarms")
+    if isinstance(existing, LitheAlarmManager):
+        return existing
+
+    setup_task = bucket.get("_alarm_setup_task")
+    if isinstance(setup_task, asyncio.Task):
+        return await asyncio.shield(setup_task)
+
+    async def _load_manager() -> LitheAlarmManager:
+        mgr = LitheAlarmManager(hass)
+        await mgr.async_load()
+        bucket["alarms"] = mgr
+        return mgr
+
+    # Publish a shared setup task before yielding so concurrent config-entry
+    # setup cannot create competing managers or orphan timer callbacks.
+    setup_task = asyncio.create_task(_load_manager())
+    bucket["_alarm_setup_task"] = setup_task
+    try:
+        return await asyncio.shield(setup_task)
+    finally:
+        if bucket.get("_alarm_setup_task") is setup_task:
+            bucket.pop("_alarm_setup_task", None)

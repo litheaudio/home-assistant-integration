@@ -17,7 +17,7 @@ from .const import (
     CONF_PORT, CONF_PRODUCT, CONF_USE_TLS, DATA_COORDINATOR, DOMAIN,
     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS, DSP_LOUDNESS,
     DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT, DSP_TREBLE_FIELD,
-    EQ_PRESETS, LS9_PRODUCTS, OUT_OPTIONS, PRODUCT_NAMES,
+    EQ_PRESETS, LS9_PRODUCTS, MAX_CHIME_SLOT, OUT_OPTIONS, PRODUCT_NAMES,
     capability_product_from_state, caps,
 )
 from .coordinator import LitheAudioCoordinator
@@ -695,7 +695,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
     # ── Playback / chime ────────────────────────────────────────────────
     async def svc_play_chime(call: ServiceCall) -> None:
-        n = max(1, min(int(call.data.get("chime_number", 1)), 14))
+        n = max(1, min(int(call.data.get("chime_number", 1)), MAX_CHIME_SLOT))
         method = str(call.data.get("method", "Indexed")).strip().lower()
         if method.startswith("direct"):
             # Method 2: MB#41 PLAYITEM:DIRECT:/system/usr/songN.mp3

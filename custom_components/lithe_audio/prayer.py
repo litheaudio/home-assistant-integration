@@ -134,6 +134,17 @@ class PrayerScheduler:
         prayer_data = self.hass.data.setdefault(DOMAIN, {}).setdefault(
             DATA_PRAYER_STATE, {}
         )
+        schedule_id = str(cfg.get("schedule_id") or "__service__")
+        schedules_state = prayer_data.setdefault("schedules", {})
+        schedule_state = schedules_state.setdefault(schedule_id, {})
+        schedule_state.update({
+            "status": "active",
+            "times": times,
+            "last_fetch_city": city,
+            "last_fetch_country": country,
+            "registered": [],
+        })
+        # Keep the original top-level keys for compatibility with older UI.
         prayer_data["times"] = times
         prayer_data["last_fetch_city"] = city
         prayer_data["last_fetch_country"] = country
@@ -175,12 +186,23 @@ class PrayerScheduler:
             entry_copy["volume"] = vol
             entry_copy["speakers"] = list(speakers)
 
+            async def _prayer_due(
+                _now: datetime, scheduled_entry: dict[str, Any] = entry_copy,
+            ) -> None:
+                await self._fire(scheduled_entry)
+
             unsub = async_track_time_change(
-                self.hass,
-                lambda now, e=entry_copy: self.hass.async_create_task(self._fire(e)),
-                hour=h, minute=m, second=0,
+                self.hass, _prayer_due, hour=h, minute=m, second=0,
             )
             self._unsubs.append(unsub)
+            schedule_state["registered"].append({
+                "prayer": prayer or "fixed",
+                "time": f"{h:02d}:{m:02d}",
+                "days": days,
+                "volume": vol,
+                "speakers": list(speakers),
+                "url": url,
+            })
             _LOGGER.info(
                 "Scheduled %s at %02d:%02d → %s",
                 prayer or "fixed", h, m, speakers,
@@ -254,3 +276,8 @@ async def async_remove_prayer_schedule(
     scheduler = schedules.pop(schedule_id, None)
     if isinstance(scheduler, PrayerScheduler):
         await scheduler.async_shutdown()
+    state = hass.data.get(DOMAIN, {}).get(DATA_PRAYER_STATE, {})
+    if isinstance(state, dict):
+        schedule_states = state.get("schedules")
+        if isinstance(schedule_states, dict):
+            schedule_states.pop(schedule_id, None)

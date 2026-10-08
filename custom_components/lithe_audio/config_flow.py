@@ -26,9 +26,10 @@ from .const import (
     BUNDLED_CERT_KEY, BUNDLED_CERT_PEM,
     CONF_CERT_PATH, CONF_KEY_PATH, CONF_PRODUCT, CONF_USE_TLS,
     DATA_COORDINATOR, DEFAULT_PORT, DOMAIN, LS10_PRODUCTS, LS9_PRODUCTS,
+    MAX_CHIME_SLOT,
     PRODUCT_NAMES,
     PRODUCT_PRO2, PRODUCT_V2, product_from_model,
-    caps, all_preset_options,
+    all_preset_options,
 )
 from .discovery import DiscoveredDevice, async_discover
 
@@ -551,7 +552,19 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                 repeat_str = f"day {a.get('day_of_month','?')}"
             else:
                 repeat_str = "daily"
-            choices[a["id"]] = f"{enabled_icon} {name} — {t} ({repeat_str})"
+            next_fire = mgr.next_fire_time(a["id"])
+            if not a.get("enabled"):
+                timer_status = "disabled"
+            elif mgr.timer_registered(a["id"]):
+                timer_status = (
+                    f"next {next_fire.strftime('%Y-%m-%d %H:%M')}"
+                    if next_fire else "timer registered"
+                )
+            else:
+                timer_status = "timer not registered"
+            choices[a["id"]] = (
+                f"{enabled_icon} {name} — {t} ({repeat_str}; {timer_status})"
+            )
         choices["__add__"] = "➕  Add new alarm"
 
         schema = vol.Schema({
@@ -746,10 +759,6 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
             SOURCE_CHIME:     "Embedded Chime",
             SOURCE_URL:       "Custom HTTP URL",
         }
-        chime_slot_max = max(
-            1,
-            int(caps(self._entry.data.get(CONF_PRODUCT, "")).get("chimes", 10) or 10),
-        )
         action_options = {
             "save":   "💾  Save",
             "save_test": "▶  Save and test now",
@@ -804,7 +813,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
             vol.Optional("favourite_slot", default=existing.get("favourite_slot", 1)):
                 vol.All(int, vol.Range(min=1, max=9)),
             vol.Optional("chime_slot", default=existing.get("chime_slot", 1)):
-                vol.All(int, vol.Range(min=1, max=chime_slot_max)),
+                vol.All(int, vol.Range(min=1, max=MAX_CHIME_SLOT)),
             vol.Optional("custom_url", default=existing.get("custom_url", "")): str,
             vol.Required("volume", default=existing.get("volume", 60)):
                 vol.All(int, vol.Range(min=0, max=100)),
@@ -869,6 +878,11 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         # Handle save / action dispatch
         if user_input is not None:
             action = user_input.get("_action", "save")
+
+            # This action is deliberately read-only: show the options that
+            # were last saved and the timers currently registered from them.
+            if action == "view":
+                return await self.async_step_prayer_view()
 
             # Parse form values
             chosen_preset = (user_input.get("preset") or "").strip()
@@ -966,14 +980,25 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         prayer_state = self.hass.data.get(DOMAIN, {}).get(
             DATA_PRAYER_STATE, {}
         ) or {}
-        times: dict[str, str] = prayer_state.get("times", {}) or {}
+        entry_state = (
+            prayer_state.get("schedules", {}).get(self._entry.entry_id, {})
+            if isinstance(prayer_state, dict)
+            else {}
+        )
+        times: dict[str, str] = (
+            entry_state.get("times") or prayer_state.get("times", {}) or {}
+        )
+        registered_count = len(entry_state.get("registered", []))
         if times:
             parts = []
             for p in PRAYER_NAMES_LIST:
                 t = times.get(p, "—")
                 marker = "✅" if p in existing_entries else "⚪"
                 parts.append(f"{marker} {p.capitalize()} {t}")
-            schedule_summary = "Today: " + " · ".join(parts)
+            schedule_summary = (
+                "Today: " + " · ".join(parts)
+                + f". Live timers: {registered_count}/{len(existing_entries)}."
+            )
         else:
             schedule_summary = "Save once to fetch today's times for your city."
 
@@ -1009,6 +1034,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                 "save":     "💾  Save",
                 "test":     "▶️  Save + Test Adhan now",
                 "advanced": "⚙️  Save + Per-prayer overrides…",
+                "view":     "📋  View saved schedule",
             }),
         })
 
@@ -1257,14 +1283,21 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Show today's resolved prayer times + scheduled actions."""
         if user_input is not None:
-            return await self.async_step_init()
+            return await self.async_step_prayer()
 
         # Pull current schedule state from the global prayer data store
         from .const import DATA_PRAYER_STATE
         prayer_state = self.hass.data.get(DOMAIN, {}).get(
             DATA_PRAYER_STATE, {}
         ) or {}
-        times: dict[str, str] = prayer_state.get("times", {}) or {}
+        entry_state = (
+            prayer_state.get("schedules", {}).get(self._entry.entry_id, {})
+            if isinstance(prayer_state, dict)
+            else {}
+        )
+        times: dict[str, str] = (
+            entry_state.get("times") or prayer_state.get("times", {}) or {}
+        )
         host = self._entry.data.get("host")
 
         opts = self._draft.get("prayer", {})
@@ -1275,28 +1308,44 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         method_label = CALC_METHODS.get(int(method), str(method)) if isinstance(method, int) else str(method)
         enabled = opts.get("enabled", False)
 
+        live_registered = {
+            item.get("prayer"): item
+            for item in entry_state.get("registered", [])
+            if isinstance(item, dict)
+        }
+        preset_labels = {
+            url: label for label, url in all_preset_options().items()
+        }
+
         # Build a human-readable summary
         lines = [
             f"**Speaker:** {host}",
             f"**Status:** {'✅ Enabled' if enabled else '⚪ Disabled'}",
+            f"**Live scheduler:** {entry_state.get('status', 'not loaded')}",
             f"**Location:** {city}, {country}",
             f"**Calculation:** {method_label}",
             "",
-            "**Today's prayer times:**",
+            "**Saved and scheduled:**",
         ]
-        if times:
-            for p in PRAYER_NAMES_LIST:
-                t = times.get(p, "—")
-                e = entries.get(p, {})
-                marker = "✅" if e else "⚪"
-                if e:
-                    days = e.get("days", "daily")
-                    vol_v = e.get("volume", "?")
-                    lines.append(f"  {marker} **{p.capitalize()}** at {t} — vol {vol_v}, {days}")
-                else:
-                    lines.append(f"  {marker} {p.capitalize()} at {t} (not scheduled)")
+        if entries:
+            for p, e in entries.items():
+                t = times.get(p, "unresolved")
+                days = e.get("days", "daily")
+                vol_v = e.get("volume", opts.get("default_volume", "?"))
+                url = e.get("url") or opts.get("default_url", "")
+                audio = preset_labels.get(url, url or "no audio URL")
+                timer = "timer registered" if p in live_registered else "timer not registered"
+                lines.append(
+                    f"  ✅ **{p.capitalize()}** at {t} — {days}, "
+                    f"volume {vol_v}, {audio} ({timer})"
+                )
         else:
-            lines.append("  _Times not yet fetched — submit the General step first._")
+            lines.append("  _No prayers have been saved._")
+
+        lines.extend([
+            "",
+            f"**Registered timers:** {len(live_registered)} of {len(entries)}",
+        ])
 
         description = "\n".join(lines)
 

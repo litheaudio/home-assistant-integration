@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.58
+
+- Fixed scheduled alarms, sunrise ramps, snoozes, and prayers using timer
+  callbacks that Home Assistant can safely execute on its event loop.
+- Added a Prayer Schedule details view showing saved prayers, resolved times,
+  recurrence, volume, audio, speaker, and live timer registration status.
+
+## 1.4.57
+
+- Restored alarm chime selection to the full LUCI range of slots 1 through 14.
+- Decoupled alarm slot validation from the model-specific number of visible chime buttons.
+
 ## 1.4.56
 
 - Fix enabled one-off alarms with a blank date silently receiving no scheduler
