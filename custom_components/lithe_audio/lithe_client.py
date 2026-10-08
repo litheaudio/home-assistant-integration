@@ -19,7 +19,7 @@ from .const import (
     MB_DEVICE_INFO, MB_DEVICE_NAME, MB_DSP, MB_FACTORY_RESET, MB_FAVOURITES,
     MB_FIRMWARE, MB_INTERFACE_IP, MB_MUTE, MB_NETWORK_INFO, MB_NETWORK_STATUS,
     MB_NOW_PLAYING, MB_PLAY_STATE, MB_PLAYBACK_AUTH, MB_PLAYBACK_GRANT,
-    MB_POSITION, MB_REBOOT_REQ, MB_TUNNEL_START,
+    MB_POSITION, MB_TUNNEL_START,
     MB_REGISTER, MB_RSSI, MB_SOURCE, MB_TIMEZONE, MB_TRANSPORT, MB_VOLUME,
     MUTE_OFF, MUTE_ON, NETWORK_STATUS, PLAY_STATES, SOURCES, TRANSPORT_NEXT,
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
@@ -1164,10 +1164,13 @@ class LitheClient:
                     )
                     self._handle_push(MB_DSP, raw, DSP_REMOTE_ID)
                 else:
-                    _LOGGER.warning("DSP live tunnel returned no state records")
+                    # Several firmware builds accept the tunnel request but do
+                    # not implement the full-state report. Live MB#112 pushes
+                    # still work, so this is a capability miss, not a fault.
+                    _LOGGER.debug("DSP live tunnel returned no state records")
             except Exception as err:
                 # DSP polling must not take the whole media player offline.
-                _LOGGER.warning("DSP live tunnel refresh failed: %s", err)
+                _LOGGER.debug("DSP live tunnel refresh unavailable: %s", err)
             finally:
                 if tunnel_writer is not None:
                     tunnel_writer.close()

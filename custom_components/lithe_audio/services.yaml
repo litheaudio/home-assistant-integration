@@ -973,7 +973,7 @@ doorbell:
   fields:
     chime:
       name: Chime Number
-      description: Which built-in chime to play (1-15 depending on model).
+      description: Which built-in chime to play (1-14 depending on model).
       required: false
       default: 1
       selector:

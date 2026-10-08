@@ -39,11 +39,14 @@ class LitheAudioCoordinator(DataUpdateCoordinator):
                 await self.client.async_connect()
             except Exception as err:
                 raise UpdateFailed(f"Cannot connect to {self.client.host}: {err}") from err
-
-        try:
-            await self.client.async_refresh()
-        except Exception as err:
-            raise UpdateFailed(f"Update failed: {err}") from err
+        else:
+            # async_connect() already performs the complete initial refresh.
+            # Repeating it here doubled every GET and could add several NV-read
+            # timeouts to each config entry during Home Assistant startup.
+            try:
+                await self.client.async_refresh()
+            except Exception as err:
+                raise UpdateFailed(f"Update failed: {err}") from err
 
         return self.client.state
 

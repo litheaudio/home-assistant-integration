@@ -20,7 +20,6 @@ because Cast groups have no LUCI endpoint of their own.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from homeassistant.core import HomeAssistant, ServiceCall
 

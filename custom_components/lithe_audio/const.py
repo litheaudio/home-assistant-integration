@@ -58,6 +58,20 @@ def product_from_model(*values: str) -> str | None:
         return PRODUCT_PRO
     return None
 
+
+def capability_product_from_state(
+    model_number: str,
+    model_variant: str,
+    detected_product: str,
+) -> str | None:
+    """Resolve capabilities from the most specific live model evidence."""
+    specific = product_from_model(model_number, model_variant)
+    if specific:
+        return specific
+    if detected_product in PRODUCT_NAMES:
+        return detected_product
+    return None
+
 # LS10 = TLS 1.2, LS9 = plain TCP
 LS10_PRODUCTS = {PRODUCT_PRO2, PRODUCT_V3, PRODUCT_IO1}
 LS9_PRODUCTS  = {PRODUCT_V2, PRODUCT_PRO, PRODUCT_MICRO}

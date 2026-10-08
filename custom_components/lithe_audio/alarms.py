@@ -99,7 +99,7 @@ class LitheAlarmManager:
         self._alarms: dict[str, dict[str, Any]] = {}
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._unsub: dict[str, callback] = {}
-        self._snoozes: dict[str, asyncio.TimerHandle] = {}
+        self._snoozes: dict[str, callback] = {}
         self._fade_tasks: dict[str, asyncio.Task] = {}
 
     # ── Lifecycle ─────────────────────────────────────────────────────
@@ -126,8 +126,11 @@ class LitheAlarmManager:
                 pass
         for h in self._timers.values():
             h.cancel()
-        for h in self._snoozes.values():
-            h.cancel()
+        for unsub in self._snoozes.values():
+            try:
+                unsub()
+            except Exception:
+                pass
         for t in self._fade_tasks.values():
             t.cancel()
         self._timers.clear()
@@ -193,12 +196,11 @@ class LitheAlarmManager:
             except Exception:
                 pass
             self._unsub.pop(sunrise_key, None)
-        # Cancel any active sunrise ramp task
-        if alarm_id in self._fade_tasks:
-            sunrise_task_key = f"{alarm_id}__sunrise_task"
-            t = self._fade_tasks.pop(sunrise_task_key, None)
-            if t:
-                t.cancel()
+        # Cancel volume fade and any active sunrise ramp task.
+        for task_key in (alarm_id, f"{alarm_id}__sunrise_task"):
+            task = self._fade_tasks.pop(task_key, None)
+            if task:
+                task.cancel()
 
     def _next_fire_time(self, alarm: dict[str, Any]) -> datetime | None:
         """Compute the next datetime this alarm should fire."""
@@ -440,7 +442,7 @@ class LitheAlarmManager:
             if target.startswith("media_player."):
                 media_player_entities.append(target)
                 continue
-            for entry_id, entry_data in bucket.items():
+            for _entry_id, entry_data in bucket.items():
                 if not isinstance(entry_data, dict):
                     continue
                 coord = entry_data.get("coordinator")
@@ -569,12 +571,12 @@ class LitheAlarmManager:
         fire_at = dt_util.now() + timedelta(minutes=m)
         # Cancel any prior snooze
         if alarm_id in self._snoozes:
-            self._snoozes[alarm_id].cancel()
+            self._snoozes.pop(alarm_id)()
         unsub = ev_helper.async_track_point_in_time(
             self.hass, lambda _now: self.hass.async_create_task(self._fire(alarm_id)),
             fire_at,
         )
-        self._snoozes[alarm_id] = unsub  # type: ignore[assignment]
+        self._snoozes[alarm_id] = unsub
         _LOGGER.info("Alarm %s snoozed for %d min (fire at %s)", alarm_id, m, fire_at.isoformat())
 
     async def async_dismiss(self, alarm_id: str) -> None:
@@ -590,14 +592,14 @@ class LitheAlarmManager:
         s = self._snoozes.pop(alarm_id, None)
         if s:
             try:
-                s.cancel()
+                s()
             except Exception:
                 pass
         _LOGGER.info("Alarm %s dismissed", alarm_id)
 
     async def _stop_playback(self, alarm: dict[str, Any]) -> None:
         bucket = self.hass.data.get(DOMAIN, {})
-        for entry_id, entry_data in bucket.items():
+        for _entry_id, entry_data in bucket.items():
             if not isinstance(entry_data, dict):
                 continue
             coord = entry_data.get("coordinator")

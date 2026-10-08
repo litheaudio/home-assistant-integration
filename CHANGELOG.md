@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.4.54
+
+- Move the Spotify compatibility probe off Home Assistant's event loop, fixing
+  the blocking `listdir`, `read_text` and `open` warnings on Core 2026.10.
+- Stop issuing a second full speaker refresh immediately after connection.
+- Update device-registry iteration for the Home Assistant 2027.9 API removal.
+- Treat unsupported/empty DSP startup tunnels as debug diagnostics instead of
+  repeated user-facing warnings; live MB#112 feedback remains active.
+- Create the group manager before media-player entities and reset its lifecycle
+  flags on the final unload, so saved groups survive integration reloads.
+- Correct alarm snooze and fade callback cleanup during dismiss, edit and
+  shutdown.
+- Prefer the product detected from live LUCI model data when numeric model
+  fields are empty, preventing WiFi v3 speakers from inheriting PRO 2-only
+  controls and chimes.
+- Remove stale chime entities above the detected model's supported slot count.
+- Keep restored DSP controls internally coherent when firmware returns no
+  startup state records, without transmitting restored values to the speaker;
+  subsequent live MB#112 feedback remains authoritative.
+- Log the install/version check once, move local-IP detection off the event
+  loop, and point documentation and issue links at the current official repo.
+
 ## 1.4.53
 
 - Move the live HOST-MCU DSP read out of the blocking integration setup path.

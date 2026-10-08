@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
@@ -51,7 +50,7 @@ def _resolve_coordinator(
         return None
 
     # IP/hostname form — match against coord.client.host
-    for entry_id, entry_data in bucket.items():
+    for _entry_id, entry_data in bucket.items():
         if not isinstance(entry_data, dict):
             continue
         coord = entry_data.get(DATA_COORDINATOR) or entry_data.get("coordinator")

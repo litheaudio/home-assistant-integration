@@ -25,9 +25,9 @@ from .const import (
     BUNDLED_CERT_KEY, BUNDLED_CERT_PEM,
     CONF_CERT_PATH, CONF_KEY_PATH, CONF_PRODUCT, CONF_USE_TLS,
     DATA_COORDINATOR, DEFAULT_PORT, DOMAIN, LS10_PRODUCTS, LS9_PRODUCTS,
-    PRODUCT_IO1, PRODUCT_MICRO, PRODUCT_NAMES,
-    PRODUCT_PRO, PRODUCT_PRO2, PRODUCT_V2, PRODUCT_V3, product_from_model,
-    ADHAN_PRESETS, QURAN_JUZ, caps, quran_juz_label, all_preset_options,
+    PRODUCT_NAMES,
+    PRODUCT_PRO2, PRODUCT_V2, product_from_model,
+    caps, all_preset_options,
 )
 from .discovery import DiscoveredDevice, async_discover
 
@@ -452,7 +452,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         # Build list of all known Lithe speakers for the picker
         bucket = self.hass.data.get(DOMAIN, {})
         all_speakers: dict[str, str] = {}
-        for entry_id, entry_data in bucket.items():
+        for _entry_id, entry_data in bucket.items():
             if not isinstance(entry_data, dict):
                 continue
             coord = entry_data.get("coordinator") or entry_data.get(DATA_COORDINATOR)
@@ -691,7 +691,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         bucket = self.hass.data.get(DOMAIN, {})
         speaker_options: list[dict[str, str]] = []
         # Lithe speakers
-        for entry_id, entry_data in bucket.items():
+        for _entry_id, entry_data in bucket.items():
             if not isinstance(entry_data, dict):
                 continue
             coord = entry_data.get("coordinator") or entry_data.get(DATA_COORDINATOR)
@@ -1036,7 +1036,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         # Reverse-lookup current default_url against presets to set initial value
         current_url = opts.get("default_url", _DEFAULT_ADHAN_URL)
         matching_label = ""
-        for label, url in presets.items():
+        for _label, url in presets.items():
             if url == current_url:
                 matching_label = url
                 break
@@ -1306,7 +1306,7 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                 # HA service: logger.set_level — sets per-logger level live
                 await self.hass.services.async_call(
                     "logger", "set_level",
-                    {f"custom_components.lithe_audio": level},
+                    {"custom_components.lithe_audio": level},
                     blocking=True,
                 )
                 _LOGGER.info("Lithe Audio log level set to %s", level)

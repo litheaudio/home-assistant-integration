@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_NAMES, SOURCES
+from .const import CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_NAMES
 from .coordinator import LitheAudioCoordinator
 
 

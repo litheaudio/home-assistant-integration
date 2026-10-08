@@ -17,16 +17,12 @@ from .const import (
     CONF_PORT, CONF_PRODUCT, CONF_USE_TLS, DATA_COORDINATOR, DOMAIN,
     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS, DSP_LOUDNESS,
     DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT, DSP_TREBLE_FIELD,
-    EQ_PRESETS, LS9_PRODUCTS, OUT_OPTIONS, PRODUCT_CHIMES, PRODUCT_NAMES,
-    caps, product_from_model,
+    EQ_PRESETS, LS9_PRODUCTS, OUT_OPTIONS, PRODUCT_NAMES,
+    capability_product_from_state, caps,
 )
 from .coordinator import LitheAudioCoordinator
 from .lithe_client import LitheClient, LitheClientLS9
-from .alarms import (
-    SOURCE_PRESET, SOURCE_FAVOURITE, SOURCE_CHIME, SOURCE_URL,
-    REPEAT_ONE_OFF, REPEAT_DAILY, REPEAT_WEEKLY, REPEAT_MONTHLY,
-    async_setup_alarm_manager, get_manager,
-)
+from .alarms import async_setup_alarm_manager, get_manager
 from .prayer import (
     async_register_prayer_service, async_remove_prayer_schedule,
     async_unload_prayer,
@@ -94,7 +90,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             """Patch the affected parser, then retry failed Spotify entries."""
             from .spotify_compat import apply_spotifyaio_compat
 
-            if not apply_spotifyaio_compat():
+            # importlib.metadata reads distribution metadata from disk.  HA
+            # 2026.10 detects that work when it happens on the event loop, so
+            # keep the compatibility probe and monkey-patch in the executor.
+            if not await hass.async_add_executor_job(apply_spotifyaio_compat):
                 return
             # Spotify is an optional after-dependency. Its initial setup has
             # completed, but allow state transitions to settle before reload.
@@ -115,8 +114,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         hass.async_create_task(_patch_and_retry_spotify())
 
-    # Version banner — helps diagnose partial-install issues. The user
-    # can grep the log for this line to confirm the running version.
+    # Version banner — helps diagnose partial-install issues. Run this once
+    # per integration load rather than once for every configured speaker.
     def _read_install_info() -> tuple[str, list[str]]:
         """Read manifest version + check critical files for staleness.
 
@@ -153,22 +152,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 pass
         return _version, _stale
 
-    try:
-        _version, _stale = await hass.async_add_executor_job(_read_install_info)
-        _LOGGER.warning(
-            "=== Lithe Audio integration starting — manifest version %s ===",
-            _version,
-        )
-        for _fname in _stale:
-            _LOGGER.error(
-                "PARTIAL INSTALL DETECTED: %s is STALE (missing marker). "
-                "Delete /config/custom_components/lithe_audio/ entirely "
-                "and reinstall v%s. Bug reports from a partial install "
-                "won't be reproducible.",
-                _fname, _version,
+    if not domain_data.get("_install_info_logged"):
+        domain_data["_install_info_logged"] = True
+        try:
+            _version, _stale = await hass.async_add_executor_job(_read_install_info)
+            _LOGGER.info(
+                "Lithe Audio integration starting (manifest version %s)",
+                _version,
             )
-    except Exception:
-        pass
+            for _fname in _stale:
+                _LOGGER.error(
+                    "PARTIAL INSTALL DETECTED: %s is STALE (missing marker). "
+                    "Delete /config/custom_components/lithe_audio/ entirely "
+                    "and reinstall v%s. Bug reports from a partial install "
+                    "won't be reproducible.",
+                    _fname, _version,
+                )
+        except Exception:
+            pass
 
     # Migration: entries created by older versions may not have `product`.
     if CONF_PRODUCT not in entry.data:
@@ -187,7 +188,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         from homeassistant.helpers import device_registry as dr
         dev_reg = dr.async_get(hass)
         # Remove stale standalone proxy DEVICES (v1.1.98 leftovers)
-        for dev in list(dev_reg.devices.values()):
+        for dev in list(dev_reg.devices):
             for domain, ident in dev.identifiers:
                 if domain == DOMAIN and isinstance(ident, str) and ident.startswith("cast_proxy_"):
                     dev_reg.async_remove_device(dev.id)
@@ -209,7 +210,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         cert = cert or BUNDLED_CERT_PEM
         key  = key  or BUNDLED_CERT_KEY
 
-    local_ip = _detect_local_ip()
+    local_ip = await hass.async_add_executor_job(_detect_local_ip)
 
     ClientCls = LitheClientLS9 if product in LS9_PRODUCTS else LitheClient
     client = ClientCls(host, port, use_tls, cert, key, local_ip)
@@ -217,12 +218,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = LitheAudioCoordinator(hass, client, entry.entry_id)
     await coordinator.async_config_entry_first_refresh()
 
-    # Model can be only a platform label (for example PRO 2 firmware may report
-    # "WiFi v3"). Only the more specific Model_num/ModelVariant fields may
-    # change the persisted capability profile automatically.
-    capability_product = product_from_model(
+    # Prefer specific model-number/variant fields, then use the product that
+    # the client derived from all live LUCI model messages. Some firmware sends
+    # numeric zeroes for Model_num/ModelVariant, so ignoring detected_product
+    # leaves a WiFi v3 permanently configured with PRO 2-only controls.
+    capability_product = capability_product_from_state(
         client.state.model_number,
         client.state.model_variant,
+        client.state.detected_product,
     )
     if capability_product and capability_product != product:
         same_transport_family = (
@@ -267,6 +270,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await async_setup_local_favourites(hass)
         register_local_fav_services(hass)
 
+    # Group entities are built by the media_player platform, so their shared
+    # manager must exist before platform forwarding begins.  Creating it after
+    # the forward caused the first platform setup to permanently record that
+    # groups had been added while actually adding none.
+    if "groups_mgr" not in hass.data.get(DOMAIN, {}):
+        from .group import async_setup_group_manager
+
+        await async_setup_group_manager(hass)
+        _register_group_services(hass)
+
     # Remove entities superseded by the slot selector/save button workflow.
     # Product-specific cleanup below also removes controls left in the entity
     # registry by older releases when the current model does not support them.
@@ -297,6 +310,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         obsolete_unique_ids.append(
             ("number", f"{host}_{entry.entry_id}_loudness")
         )
+    supported_chimes = int(product_caps.get("chimes", 0) or 0)
+    obsolete_unique_ids.extend(
+        (
+            "button",
+            f"{host}_{entry.entry_id}_chime_{slot}",
+        )
+        for slot in range(supported_chimes + 1, 15)
+    )
     for entity_domain, unique_id in obsolete_unique_ids:
         entity_id = registry.async_get_entity_id(
             entity_domain, DOMAIN, unique_id
@@ -315,12 +336,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await async_setup_alarm_manager(hass)
     if not hass.services.has_service(DOMAIN, "alarm_create"):
         _register_alarm_services(hass)
-
-    # Group manager — single instance shared across config entries.
-    if "groups_mgr" not in hass.data.get(DOMAIN, {}):
-        from .group import async_setup_group_manager
-        await async_setup_group_manager(hass)
-        _register_group_services(hass)
 
     # Announce / broadcast / doorbell services (high-level wrappers)
     if not hass.data.get(DOMAIN, {}).get("_announce_registered"):
@@ -435,6 +450,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             alarm_mgr = bucket.pop("alarms", None)
             if alarm_mgr:
                 await alarm_mgr.async_shutdown()
+            bucket.pop("groups_mgr", None)
+            bucket.pop("_groups_added", None)
+            bucket.pop("_group_async_add_entities", None)
             for svc in (
                 "play_chime", "play_url", "play_favourite", "save_favourite",
                 "play_quran_juz", "play_adhan",
@@ -677,7 +695,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
     # ── Playback / chime ────────────────────────────────────────────────
     async def svc_play_chime(call: ServiceCall) -> None:
-        n = max(1, min(int(call.data.get("chime_number", 1)), 15))
+        n = max(1, min(int(call.data.get("chime_number", 1)), 14))
         method = str(call.data.get("method", "Indexed")).strip().lower()
         if method.startswith("direct"):
             # Method 2: MB#41 PLAYITEM:DIRECT:/system/usr/songN.mp3

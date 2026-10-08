@@ -155,7 +155,7 @@ def register_snapshot_services(hass: HomeAssistant) -> None:
     # be active (one per speaker), keyed by host IP.
     import asyncio
     from homeassistant.helpers import event as ev_helper
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     from homeassistant.util import dt as dt_util
 
     sleep_timers: dict[str, Any] = hass.data[DOMAIN].setdefault("sleep_timers", {})

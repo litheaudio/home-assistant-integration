@@ -22,7 +22,6 @@ The integration fetches prayer times once and re-fetches each day at 00:01.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Any

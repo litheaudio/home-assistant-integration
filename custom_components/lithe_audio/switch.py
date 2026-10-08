@@ -71,6 +71,16 @@ class _LitheBaseSwitch(
         last_state = await self.async_get_last_state()
         if last_state is not None:
             self._state = last_state.state == STATE_ON
+            if (
+                self._restore_state_attr
+                and getattr(self._client.state, self._restore_state_attr, None) is None
+            ):
+                # Keep related controls coherent when firmware supplies no
+                # initial DSP status. This is display-only state: no command is
+                # sent, and the next live MB112 broadcast remains authoritative.
+                self._client.state.restore_dsp_snapshot({
+                    self._restore_state_attr: int(self._state),
+                })
 
     @callback
     def _handle_coordinator_update(self) -> None:

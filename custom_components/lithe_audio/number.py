@@ -92,6 +92,11 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
                 self._value = max(-5, min(5, int(float(last_state.state))))
             except (TypeError, ValueError):
                 pass
+            else:
+                if getattr(self._client.state, self._state_attr, None) is None:
+                    self._client.state.restore_dsp_snapshot({
+                        self._state_attr: self._value,
+                    })
 
     @property
     def native_value(self) -> float:
@@ -151,6 +156,11 @@ class LitheBalanceNumber(_LitheBaseNumber, RestoreEntity):
                 self._value = max(-6, min(6, int(float(last_state.state))))
             except (TypeError, ValueError):
                 pass
+            else:
+                if self._client.state.dsp_balance is None:
+                    self._client.state.restore_dsp_snapshot({
+                        "dsp_balance": self._value,
+                    })
 
     @property
     def native_value(self) -> float:
@@ -198,8 +208,12 @@ class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
         except (TypeError, ValueError):
             return
 
-        # UI fallback only. A genuine MB#112 broadcast remains authoritative
-        # and must not be overwritten by restored HA state.
+        if self._client.state.dsp_loudness_gain is None:
+            # Display-only fallback. A genuine MB112 broadcast remains
+            # authoritative and must not be written back during startup.
+            self._client.state.restore_dsp_snapshot({
+                "dsp_loudness_gain": self._value,
+            })
 
     @property
     def available(self) -> bool:

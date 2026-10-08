@@ -94,6 +94,10 @@ class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state is not None and last_state.state in EQ_PRESETS:
             self._current = last_state.state
+            if self._client.state.dsp_eq is None:
+                self._client.state.restore_dsp_snapshot({
+                    "dsp_eq": EQ_PRESETS.index(self._current),
+                })
 
     @property
     def current_option(self) -> str:
@@ -131,6 +135,10 @@ class LitheOutputSelect(_LitheBaseSelect, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state is not None and last_state.state in OUT_OPTIONS:
             self._current = last_state.state
+            if self._client.state.dsp_output is None:
+                self._client.state.restore_dsp_snapshot({
+                    "dsp_output": OUT_OPTIONS.index(self._current),
+                })
 
     @property
     def current_option(self) -> str:
@@ -173,6 +181,10 @@ class LitheHighPassSelect(_LitheBaseSelect, RestoreEntity):
         # broadcast arrives. Never write restored UI state back to the speaker
         # during startup.
         self._current = last_state.state
+        if self._client.state.dsp_highpass is None:
+            self._client.state.restore_dsp_snapshot({
+                "dsp_highpass": HP_OPTIONS.index(self._current),
+            })
 
     @property
     def available(self) -> bool:
@@ -239,7 +251,7 @@ class LitheFavouriteSaveSlotSelect(_LitheBaseSelect):
 
     _attr_name = "Favourites — Save Slot"
     _attr_icon = "mdi:playlist-edit"
-    _attr_options: list[str] = []
+    _attr_options: tuple[str, ...] = ()
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry)

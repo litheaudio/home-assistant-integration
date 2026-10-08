@@ -48,12 +48,9 @@ from homeassistant.components.media_player import (
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
     MediaPlayerState,
-    MediaType,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
 from .const import DATA_COORDINATOR, DOMAIN
@@ -222,7 +219,7 @@ def discover_cast_groups(hass: HomeAssistant) -> list[dict[str, Any]]:
     # Pass 2 (legacy): walk the device registry directly for any cast-domain
     # devices marked as Google Cast Group, in case some weren't caught by
     # the platform-walk above (rare, but defensive).
-    for device in dev_reg.devices.values():
+    for device in dev_reg.devices:
         if device.model != "Google Cast Group":
             continue
         for entry in er.async_entries_for_device(ent_reg, device.id):
@@ -294,7 +291,7 @@ class LitheGroupMediaPlayer(MediaPlayerEntity):
         members = (self._group_data or {}).get("members", []) or []
         coords = []
         bucket = self.hass.data.get(DOMAIN, {})
-        for entry_id, entry_data in bucket.items():
+        for _entry_id, entry_data in bucket.items():
             if not isinstance(entry_data, dict):
                 continue
             coord = entry_data.get(DATA_COORDINATOR) or entry_data.get("coordinator")
@@ -574,4 +571,3 @@ def create_cast_group_proxies(hass: HomeAssistant, parent_host: str) -> list:
     for cg in discover_cast_groups(hass):
         proxies.append(LitheCastGroupProxy(hass, cg, parent_host))
     return proxies
-

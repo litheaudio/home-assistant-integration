@@ -195,7 +195,7 @@ def _get_target_coordinator(hass: HomeAssistant, entity_id: str | None):
     """Find the coordinator matching an entity_id. Falls back to first
     available coordinator if no entity_id is given."""
     bucket = hass.data.get(DOMAIN, {})
-    for entry_id, entry_data in bucket.items():
+    for _entry_id, entry_data in bucket.items():
         if not isinstance(entry_data, dict):
             continue
         coord = entry_data.get(DATA_COORDINATOR) or entry_data.get("coordinator")
@@ -208,7 +208,7 @@ def _get_target_coordinator(hass: HomeAssistant, entity_id: str | None):
         if entity_id.endswith(host.replace(".", "_")) or host in entity_id:
             return coord
     # Last resort: first coordinator
-    for entry_id, entry_data in bucket.items():
+    for _entry_id, entry_data in bucket.items():
         if isinstance(entry_data, dict):
             coord = entry_data.get(DATA_COORDINATOR) or entry_data.get("coordinator")
             if coord:

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
@@ -34,7 +33,7 @@ DEFAULT_CHIME_WAIT_S    = 4
 async def _all_lithe_hosts(hass: HomeAssistant) -> list[str]:
     """Return all connected Lithe speaker host IPs."""
     hosts: list[str] = []
-    for entry_id, entry_data in hass.data.get(DOMAIN, {}).items():
+    for _entry_id, entry_data in hass.data.get(DOMAIN, {}).items():
         if not isinstance(entry_data, dict):
             continue
         coord = entry_data.get(DATA_COORDINATOR) or entry_data.get("coordinator")
@@ -257,7 +256,7 @@ def _register_services(hass: HomeAssistant) -> None:
         by a TTS message, ducking prior playback briefly.
 
         Fields:
-          chime          — chime slot (1-15) — default 1
+          chime          — chime slot (1-14) — default 1
           message        — optional TTS to follow the chime
           speakers       — host list (default: all)
           volume         — 0-100 (default 75)
@@ -276,7 +275,7 @@ def _register_services(hass: HomeAssistant) -> None:
         # request via the existing play_chime helper instead.
         bucket = hass.data.get(DOMAIN, {})
         coords = []
-        for entry_id, entry_data in bucket.items():
+        for _entry_id, entry_data in bucket.items():
             if not isinstance(entry_data, dict):
                 continue
             coord = entry_data.get(DATA_COORDINATOR) or entry_data.get("coordinator")

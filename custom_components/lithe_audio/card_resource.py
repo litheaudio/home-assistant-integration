@@ -12,13 +12,11 @@ integration so HACS install is one step (no separate card install).
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
