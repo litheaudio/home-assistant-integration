@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.4.62
+
+- Remove the unsupported Loudness and Night Mode controls from iO1 speakers.
+- Remove stale iO1 Loudness and Night Mode entities created by older releases
+  when the integration reloads. WiFi PRO 2 and WiFi V3 controls are unchanged.
+
+## 1.4.61
+
+- Restore the iO1-specific EQ preset choices: Outdoor, Indoor and Pendent.
+- Replace the generic iO1 Treble/Mid/Bass labels with Treble Low 2 kHz,
+  Treble Mid 4 kHz and Treble High 6 kHz controls.
+- Use the documented iO1 EQ range of -6 to +6 dB and keep all three bands
+  adjustable for every iO1 preset. Existing entity IDs are preserved.
+- Keep the iO1 balance command on the documented MB112 balance path while
+  isolating all iO1 EQ behavior from the WiFi PRO 2 and WiFi V3 profiles.
+
+## 1.4.60
+
+- Hide the Cast Group selector when Home Assistant has no real Google Cast
+  group available, and remove stale selector entities from earlier versions.
+- Keep the selector when a group is available; selecting it overrides future
+  regular URL playback by forwarding it through that Cast group.
+
+## 1.4.59
+
+- Restore all fourteen embedded chime controls for WiFi V3 speakers.
+- Add Edit and Delete actions to the saved Prayer Schedule details screen.
+- Keep live EQ band positions and dB values visible for non-Normal presets
+  while continuing to reject manual band writes outside Normal mode.
+- Confirm that PRO 2 and V3 Cast diagnostics omit RSSI fields; these models
+  continue to report Unknown rather than displaying fabricated signal data.
+
 ## 1.4.58
 
 - Fixed scheduled alarms, sunrise ramps, snoozes, and prayers using timer

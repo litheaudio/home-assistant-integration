@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.58** — reliable alarm/prayer timer callbacks and visible prayer schedule status.
+**Latest: 1.4.62** — remove unsupported Loudness and Night Mode controls from iO1.
 
 ---
 
