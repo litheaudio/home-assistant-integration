@@ -125,6 +125,7 @@ MB_AUDIOCUE       = 82   # NEW: Audiocue lifecycle notifications (newer firmware
 MB_DEVICE_NAME    = 90
 MB_NETWORK_INFO   = 91
 MB_DSP            = 112
+MB_TUNNEL_START   = 111
 MB_REBOOT_REQ     = 114   # Reboot Request (was incorrectly 37)
 MB_REBOOT_CMD     = 115
 MB_INTERFACE_IP   = 123   # RxTx_MB#123 — current network interface + IP address
@@ -194,6 +195,7 @@ DSP_OUTPUT    = 0x0F   # 0=Mono, 1=Stereo, 2=Left, 3=Right
 DSP_HIGHPASS  = 0x32   # 0=60Hz, 1=80Hz, 2=100Hz, 3=120Hz, 4=150Hz
 DSP_TUNING    = 0x0D   # 0=13L enclosure, 1=open-back protection
 DSP_STATUS_ALL = 0x15  # read-only MCU settings report trigger
+DSP_TUNNEL_PORT = 4444 # vendor-documented MB#111 TCP tunnel example port
 
 DSP_BASS_FIELD   = 0x06
 DSP_MID_FIELD    = 0x04

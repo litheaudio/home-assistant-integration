@@ -215,7 +215,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = ClientCls(host, port, use_tls, cert, key, local_ip)
 
     coordinator = LitheAudioCoordinator(hass, client, entry.entry_id)
-    await coordinator.async_restore_dsp_state()
     await coordinator.async_config_entry_first_refresh()
 
     # Model can be only a platform label (for example PRO 2 firmware may report

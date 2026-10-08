@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.50
+
+- Order PRO 2 audio controls as EQ preset, bass, mid, treble, balance,
+  speaker output, loudness, high pass, night mode and Cast group.
+- Lock the manual bass, mid and treble sliders whenever the active EQ preset
+  is not Normal, while retaining their live displayed values.
+- Preserve the existing, proven MB#112 write path for high-pass frequency and
+  loudness gain; the MB#111 tunnel remains read-only for live startup sync.
+
+## 1.4.49
+
+- Read the current DSP/EQ state live from the speaker's HOST MCU through the
+  documented MB#111 raw TCP tunnel and `All_informationGET` request. The live
+  read runs on initial connection and each coordinator refresh.
+- Stop restoring DSP controls from Home Assistant storage at startup.
+- Treat `00 03` MCU records as GET requests, not state values, preventing
+  request field IDs from appearing as false ON states.
+- Decode the live report for EQ bands/preset, loudness and gain, night mode,
+  balance, output mode, high-pass frequency, and high-pass enable/tuning.
+
 All notable changes to this project will be documented in this file.
 
 ## [1.4.48] - 2026-10-08

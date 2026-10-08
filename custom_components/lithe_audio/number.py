@@ -75,7 +75,8 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
 
     def __init__(self, coordinator, entry, name: str, state_attr: str, field: int):
         super().__init__(coordinator, entry)
-        self._attr_name = f"Audio — EQ {name}"
+        order = {"Bass": 2, "Mid": 3, "Treble": 4}[name]
+        self._attr_name = f"Audio — {order:02d} EQ {name}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_{name.lower()}"
         self._state_attr = state_attr
         self._field = field
@@ -101,8 +102,24 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
             return float(val)
         return float(self._value)
 
+    def _locked_value(self) -> float:
+        value = getattr(self._client.state, self._state_attr, None)
+        return float(value if value is not None else self._value)
+
+    @property
+    def native_min_value(self) -> float:
+        # HA has no separate read-only NumberEntity mode. A zero-width range
+        # keeps the preset's live value visible while disabling slider travel.
+        return self._locked_value() if self._client.state.dsp_eq != 0 else -5.0
+
+    @property
+    def native_max_value(self) -> float:
+        return self._locked_value() if self._client.state.dsp_eq != 0 else 5.0
+
     async def async_set_native_value(self, value: float) -> None:
         import time
+        if self._client.state.dsp_eq != 0:
+            return
         self._value = int(value)
         self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_EQ_BANDS, self._value, self._field)
@@ -112,7 +129,7 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
 class LitheBalanceNumber(_LitheBaseNumber, RestoreEntity):
     """Balance slider: -6 (full left) to +6 (full right)."""
 
-    _attr_name = "Audio — Balance"
+    _attr_name = "Audio — 05 Balance"
     _attr_native_min_value = -6
     _attr_native_max_value = 6
     _attr_native_step = 1
@@ -154,7 +171,7 @@ class LitheBalanceNumber(_LitheBaseNumber, RestoreEntity):
 class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
     """PRO 2 loudness gain, enabled by the separate loudness switch."""
 
-    _attr_name = "Audio — Loudness Gain"
+    _attr_name = "Audio — 07 Loudness Gain"
     _attr_native_min_value = -10
     _attr_native_max_value = 10
     _attr_native_step = 1

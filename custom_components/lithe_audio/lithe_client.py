@@ -19,12 +19,12 @@ from .const import (
     MB_DEVICE_INFO, MB_DEVICE_NAME, MB_DSP, MB_FACTORY_RESET, MB_FAVOURITES,
     MB_FIRMWARE, MB_INTERFACE_IP, MB_MUTE, MB_NETWORK_INFO, MB_NETWORK_STATUS,
     MB_NOW_PLAYING, MB_PLAY_STATE, MB_PLAYBACK_AUTH, MB_PLAYBACK_GRANT,
-    MB_POSITION, MB_REBOOT_REQ,
+    MB_POSITION, MB_REBOOT_REQ, MB_TUNNEL_START,
     MB_REGISTER, MB_RSSI, MB_SOURCE, MB_TIMEZONE, MB_TRANSPORT, MB_VOLUME,
     MUTE_OFF, MUTE_ON, NETWORK_STATUS, PLAY_STATES, SOURCES, TRANSPORT_NEXT,
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
-    DSP_REMOTE_ID, DSP_STATUS_ALL,
+    DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
     product_from_model,
 )
 
@@ -216,6 +216,7 @@ class LitheClient:
         self._nv_read_lock = asyncio.Lock()
         self._nv_model_probe_complete: bool = False
         self._next_cast_wifi_probe: float = 0.0
+        self._dsp_refresh_lock = asyncio.Lock()
         # Counter of consecutive resync events — triggers reconnect at 10
         self._resync_count: int = 0
 
@@ -361,11 +362,6 @@ class LitheClient:
         We previously tried removing these per a strict spec read and it
         broke track info / source display / play state, so they stay.
         """
-        # Do not send MB#112/0x15 here. Bench testing on CR443GP_4083 shows
-        # that it acknowledges the packet with SUCCESS but does not return a
-        # settings dump. DSP state is learned from genuine MB#112 broadcasts
-        # and restored read-only by the coordinator across HA restarts.
-
         # Standard refresh — speaker responds to all of these
         for mb in (MB_DEVICE_NAME,      # 90  Device Name
                    MB_FIRMWARE,         # 5   Firmware Version
@@ -415,6 +411,12 @@ class LitheClient:
 
         # The HTTP page is the confirmed source of Bluetooth service state.
         await self._refresh_bluetooth_http_state()
+
+        # MB#112 replies are delivered to an MB#111 raw TCP tunnel, not back
+        # to the LUCI TLS command socket. Read the HOST MCU directly so every
+        # coordinator refresh starts from the speaker's current DSP state.
+        if self.use_tls:
+            await self.async_dsp_refresh()
 
     async def async_read_nv(self, item: str) -> str | None:
         """Read an NV item via MB#208 SET READ_<item>.
@@ -1099,22 +1101,84 @@ class LitheClient:
         self._notify()
 
     async def async_dsp_refresh(self) -> None:
-        """Send the vendor 0x15 diagnostic trigger.
+        """Read the current HOST-MCU settings through the MB#111 tunnel.
 
-        CR443GP_4083 acknowledges this with SUCCESS but returns no settings
-        to third-party clients, so normal refresh deliberately does not call
-        it. Keep the exact packet available for protocol diagnostics only.
+        MB#112 on the TLS LUCI socket is the LS-to-MCU transport envelope. Its
+        SUCCESS acknowledgement is not the MCU reply. The Lithe app first
+        creates an MB#111 TCP tunnel, sends the raw 0x15 request through that
+        socket, and reads the MCU's 00 04 state records there.
         """
-        sub = bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01])
-        header = struct.pack(
-            "<HBHBHH", DSP_REMOTE_ID, 0x02, MB_DSP, 0, 0x0000, len(sub)
-        )
-        packet = header + sub + b"\x00"
         if not self._writer or self._writer.is_closing():
-            _LOGGER.debug("DSP state refresh skipped because writer is unavailable")
+            _LOGGER.debug("DSP live refresh skipped because writer is unavailable")
             return
-        _LOGGER.debug("TX DSP MB#112 full-state request via subcommand 0x15")
-        await self._write_packet(packet)
+
+        sub = bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01])
+        async with self._dsp_refresh_lock:
+            tunnel_writer: asyncio.StreamWriter | None = None
+            try:
+                tunnel_reader, tunnel_writer = await self._async_open_dsp_tunnel()
+
+                tunnel_writer.write(sub)
+                await tunnel_writer.drain()
+                _LOGGER.debug(
+                    "TX DSP tunnel full-state request %s",
+                    " ".join(f"{byte:02X}" for byte in sub),
+                )
+
+                chunks: list[bytes] = []
+                deadline = asyncio.get_running_loop().time() + 3.0
+                while asyncio.get_running_loop().time() < deadline:
+                    timeout = 1.0 if not chunks else 0.45
+                    try:
+                        chunk = await asyncio.wait_for(
+                            tunnel_reader.read(4096), timeout=timeout
+                        )
+                    except asyncio.TimeoutError:
+                        break
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+
+                if chunks:
+                    raw = b"".join(chunks)
+                    _LOGGER.info(
+                        "RX DSP live tunnel report: %d bytes", len(raw)
+                    )
+                    self._handle_push(MB_DSP, raw, DSP_REMOTE_ID)
+                else:
+                    _LOGGER.warning("DSP live tunnel returned no state records")
+            except Exception as err:
+                # DSP polling must not take the whole media player offline.
+                _LOGGER.warning("DSP live tunnel refresh failed: %s", err)
+            finally:
+                if tunnel_writer is not None:
+                    tunnel_writer.close()
+                    try:
+                        await tunnel_writer.wait_closed()
+                    except (ConnectionError, OSError):
+                        pass
+
+    async def _async_open_dsp_tunnel(
+        self,
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """Connect to the HOST-MCU tunnel, creating its listener if needed."""
+        try:
+            return await asyncio.wait_for(
+                asyncio.open_connection(self.host, DSP_TUNNEL_PORT),
+                timeout=0.75,
+            )
+        except (OSError, asyncio.TimeoutError):
+            await self._send(
+                0x02,
+                MB_TUNNEL_START,
+                str(DSP_TUNNEL_PORT),
+                remote_id=DSP_REMOTE_ID,
+            )
+            await asyncio.sleep(0.2)
+            return await asyncio.wait_for(
+                asyncio.open_connection(self.host, DSP_TUNNEL_PORT),
+                timeout=2.0,
+            )
 
     # ── Callbacks ──────────────────────────────────────────────────────────
 
@@ -1560,8 +1624,8 @@ class LitheClient:
             # Payload is binary DSP sub-packet(s) — see vendor packet
             # capture for the on-wire format.
             #
-            # Push format     (5 bytes): 00 03 <subMB_hi> <subMB_lo> <value>
-            # SET response    (6 bytes): 00 04 <subMB_hi> <subMB_lo> 02 <value>
+            # GET request     (5 bytes): 00 03 <subMB_hi> <subMB_lo> <field>
+            # State response  (6 bytes): 00 04 <subMB_hi> <subMB_lo> field value
             #
             # Multiple sub-packets may be concatenated in one MB#112 frame.
             # We populate state.dsp_* fields so HA entities (selects,
@@ -1616,7 +1680,8 @@ class LitheClient:
                 updates: list[tuple[str, int]] = []
                 i = 0
                 while i + 5 <= len(raw):
-                    # Push packet — 00 03 <subMB hi> <subMB lo> <value>
+                    # GET request echo. This is not state: the final byte is
+                    # a field/request ID, not the current setting value.
                     if raw[i] == 0x00 and raw[i+1] == 0x03 and i + 5 <= len(raw):
                         sub_mb = (raw[i+2] << 8) | raw[i+3]
                         if sub_mb > 0xFF:
@@ -1624,10 +1689,9 @@ class LitheClient:
                         else:
                             sub_mb = sub_mb if sub_mb else raw[i+3]
                         val_byte = raw[i+4]
-                        parsed.append(f"push sub=0x{sub_mb:02x}({sub_mb}) val={val_byte}")
-                        if sub_mb in _DSP_MAP:
-                            attr, decode = _DSP_MAP[sub_mb]
-                            updates.append((attr, decode(val_byte)))
+                        parsed.append(
+                            f"get-request sub=0x{sub_mb:02x} field={val_byte}"
+                        )
                         i += 5
                     # SET response / GET response — 00 04 <subMB hi> <subMB lo> [status] <value>
                     elif raw[i] == 0x00 and raw[i+1] == 0x04 and i + 6 <= len(raw):
