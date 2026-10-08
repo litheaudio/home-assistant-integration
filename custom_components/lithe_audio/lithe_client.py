@@ -1050,6 +1050,53 @@ class LitheClient:
                 "DSP TX sub=0x%02x field=0x%02x val=%d write FAILED: %s",
                 sub_mb, field, value, e,
             )
+        else:
+            # This firmware replies SUCCESS to the sending client but sends
+            # the binary MB#112 state record only to the other registered
+            # clients. Record a successfully transmitted local command so it
+            # can be restored after HA restarts. Any later speaker/app push
+            # remains authoritative and overwrites it.
+            self._record_local_dsp_command(sub_mb, value, field)
+
+    def _record_local_dsp_command(
+        self, sub_mb: int, value: int, field: int
+    ) -> None:
+        """Mirror a successfully written DSP command into persistent state."""
+        from .const import (
+            DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS,
+            DSP_HIGHPASS, DSP_LOUDNESS, DSP_LOUDNESS_GAIN,
+            DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT,
+            DSP_TREBLE_FIELD, DSP_TUNING,
+        )
+
+        attr: str | None = None
+        state_value = value
+        if sub_mb == DSP_EQ_BANDS:
+            attr = {
+                DSP_BASS_FIELD: "dsp_bass",
+                DSP_MID_FIELD: "dsp_mid",
+                DSP_TREBLE_FIELD: "dsp_treble",
+            }.get(field)
+        else:
+            attr = {
+                DSP_EQ: "dsp_eq",
+                DSP_LOUDNESS: "dsp_loudness",
+                DSP_LOUDNESS_GAIN: "dsp_loudness_gain",
+                DSP_NIGHTMODE: "dsp_nightmode",
+                DSP_BALANCE: "dsp_balance",
+                DSP_OUTPUT: "dsp_output",
+                DSP_HIGHPASS: "dsp_highpass",
+                DSP_TUNING: "dsp_tuning",
+            }.get(sub_mb)
+            if sub_mb == DSP_LOUDNESS_GAIN:
+                state_value = value - 10
+
+        if attr is None:
+            return
+        setattr(self.state, attr, state_value)
+        self.state.dsp_state_source = "local"
+        self.state.dsp_feedback_revision += 1
+        self._notify()
 
     async def async_dsp_refresh(self) -> None:
         """Send the vendor 0x15 diagnostic trigger.

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.47] - 2026-10-08
+
+### Fixed
+
+- Persist successfully transmitted Home Assistant DSP changes as well as
+  live MB112 broadcasts. The firmware returns only `SUCCESS` to the sending
+  client and does not echo the binary state record back to it.
+- Use Home Assistant's native delayed `Store` writer for MB112 bursts instead
+  of cancelling and recreating background save tasks.
+- Flush the current DSP snapshot when the integration unloads.
+
 ## [1.4.46] - 2026-10-08
 
 ### Fixed
