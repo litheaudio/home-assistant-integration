@@ -1,5 +1,7 @@
 """Constants for the Lithe Audio integration."""
 
+import os as _os
+
 DOMAIN = "lithe_audio"
 
 # Config entry keys
@@ -222,6 +224,16 @@ def loudness_gain_to_wire(value: int | float) -> int:
     return max(-10, min(10, int(value))) + 10
 
 EQ_PRESETS  = ["Normal", "Acoustic", "Jazz", "Pop", "Hip-Hop"]
+IO1_EQ_PRESETS = ["Outdoor", "Indoor", "Pendent"]
+# iO1 reuses the three 0x09 setter fields, but they address three treble
+# crossover bands rather than the generic Treble/Mid/Bass controls.
+# Keep the legacy state/unique-id keys so existing HA entities are renamed
+# in place instead of being duplicated during upgrade.
+IO1_EQ_BANDS = (
+    ("Treble Low 2 kHz", "dsp_treble", DSP_TREBLE_FIELD, "treble"),
+    ("Treble Mid 4 kHz", "dsp_mid", DSP_MID_FIELD, "mid"),
+    ("Treble High 6 kHz", "dsp_bass", DSP_BASS_FIELD, "bass"),
+)
 OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]
 HP_OPTIONS = ["60 Hz", "80 Hz", "100 Hz", "120 Hz"]
 TUNING_OPTIONS = ["Enclosure Mode 13L", "Open Back Mode"]
@@ -240,7 +252,7 @@ PRODUCT_CHIMES = {
     # PRO 2 slots 10-14 use legacy embedded asset payloads (songN.wav)
     # because its two-digit indexed parser does not accept "play N".
     PRODUCT_PRO2:  14,
-    PRODUCT_V3:    6,
+    PRODUCT_V3:    14,
     PRODUCT_IO1:   10,
     PRODUCT_V2:    0,
     PRODUCT_PRO:   6,
@@ -296,7 +308,7 @@ PRODUCT_CAPS = {
         "spdif_in_switch":  True,
     },
     PRODUCT_V3: {
-        "chimes":           6,
+        "chimes":           14,
         "eq_select":        True,
         "output_select":    True,
         "highpass_select":  False,
@@ -319,8 +331,8 @@ PRODUCT_CAPS = {
         "tuning_switch":    False,
         "balance_number":   True,
         "loudness_number":  False,
-        "loudness_switch":  True,
-        "nightmode_switch": True,
+        "loudness_switch":  False,
+        "nightmode_switch": False,
         "bluetooth_switch": True,
         "aux_in_switch":    False,
         "spdif_in_switch":  False,
@@ -411,7 +423,6 @@ LS10_MODELS = ("PRO2", "WiFiV3", "WIFIV3", "IO1", "io1", "iO1")
 # LS10 speakers use TLS 1.2 mutual auth with a single per-developer cert
 # issued by Lithe Audio. The cert is bundled with the integration so users
 # never have to obtain or paste it.
-import os as _os
 _CERTS_DIR = _os.path.join(_os.path.dirname(__file__), "certs")
 BUNDLED_CERT_PEM = _os.path.join(_CERTS_DIR, "client.pem")
 BUNDLED_CERT_KEY = _os.path.join(_CERTS_DIR, "client.key")

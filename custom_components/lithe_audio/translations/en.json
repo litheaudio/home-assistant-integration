@@ -229,7 +229,7 @@
         "title": "Today's prayer schedule",
         "description": "{summary}",
         "data": {
-          "acknowledge": "Got it"
+          "_action": "Schedule action"
         }
       },
       "logging": {

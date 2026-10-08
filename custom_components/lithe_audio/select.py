@@ -4,15 +4,27 @@ from __future__ import annotations
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
-    DSP_EQ, DSP_HIGHPASS, DSP_OUTPUT, DSP_TUNING,
-    EQ_PRESETS, HP_OPTIONS, OUT_OPTIONS, TUNING_OPTIONS, audio_control_name,
+    CONF_PRODUCT,
+    DATA_COORDINATOR,
+    DOMAIN,
+    DSP_EQ,
+    DSP_HIGHPASS,
+    DSP_OUTPUT,
+    DSP_TUNING,
+    EQ_PRESETS,
+    HP_OPTIONS,
+    IO1_EQ_PRESETS,
+    OUT_OPTIONS,
+    PRODUCT_IO1,
+    TUNING_OPTIONS,
+    audio_control_name,
     caps,
 )
 from .coordinator import LitheAudioCoordinator
@@ -24,7 +36,9 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: LitheAudioCoordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
+    coordinator: LitheAudioCoordinator = hass.data[DOMAIN][entry.entry_id][
+        DATA_COORDINATOR
+    ]
     product = entry.data[CONF_PRODUCT]
     c = caps(product)
 
@@ -38,11 +52,24 @@ async def async_setup_entry(
     if c["tuning_select"]:
         entities.append(LitheTuningSelect(coordinator, entry))
 
-    # Cast Group selector — every speaker gets one. The dropdown lists
-    # Cast groups discovered live from HA's Cast integration. Picking
-    # one routes subsequent media playback through the Cast group's
-    # media_player entity (Google's multi-room sync).
-    entities.append(LitheCastGroupSelect(coordinator, entry))
+    # Only expose Cast routing when HA has a real Google Cast group to pick.
+    # A selector containing only "None — local only" has no useful action.
+    from .group import discover_cast_groups
+    cast_groups = discover_cast_groups(hass)
+    cast_group_unique_id = (
+        f"{entry.data['host']}_{entry.entry_id}_cast_group"
+    )
+    if cast_groups:
+        entities.append(LitheCastGroupSelect(coordinator, entry))
+    else:
+        # Remove the stale registry entry left by earlier releases so it does
+        # not linger as an unavailable/confusing control on the device page.
+        registry = er.async_get(hass)
+        entity_id = registry.async_get_entity_id(
+            "select", DOMAIN, cast_group_unique_id
+        )
+        if entity_id:
+            registry.async_remove(entity_id)
     entities.append(LitheFavouriteSaveSlotSelect(coordinator, entry))
 
     if entities:
@@ -85,18 +112,23 @@ class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry)
+        self._attr_options = (
+            IO1_EQ_PRESETS
+            if entry.data[CONF_PRODUCT] == PRODUCT_IO1
+            else EQ_PRESETS
+        )
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_eq"
-        self._current = "Normal"
+        self._current = self._attr_options[0]
         self._optimistic_until: float = 0.0
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state in EQ_PRESETS:
+        if last_state is not None and last_state.state in self._attr_options:
             self._current = last_state.state
             if self._client.state.dsp_eq is None:
                 self._client.state.restore_dsp_snapshot({
-                    "dsp_eq": EQ_PRESETS.index(self._current),
+                    "dsp_eq": self._attr_options.index(self._current),
                 })
 
     @property
@@ -104,13 +136,13 @@ class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
         import time
         if time.monotonic() >= self._optimistic_until:
             value = getattr(self._client.state, "dsp_eq", None)
-            if isinstance(value, int) and 0 <= value < len(EQ_PRESETS):
-                return EQ_PRESETS[value]
+            if isinstance(value, int) and 0 <= value < len(self._attr_options):
+                return self._attr_options[value]
         return self._current
 
     async def async_select_option(self, option: str) -> None:
         import time
-        idx = EQ_PRESETS.index(option) if option in EQ_PRESETS else 0
+        idx = self._attr_options.index(option) if option in self._attr_options else 0
         self._current = option
         self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_EQ, idx)

@@ -10,9 +10,19 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
-    DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ_BANDS, DSP_MID_FIELD,
-    DSP_LOUDNESS_GAIN, DSP_TREBLE_FIELD, audio_control_name, caps,
+    CONF_PRODUCT,
+    DATA_COORDINATOR,
+    DOMAIN,
+    DSP_BALANCE,
+    DSP_BASS_FIELD,
+    DSP_EQ_BANDS,
+    DSP_LOUDNESS_GAIN,
+    DSP_MID_FIELD,
+    DSP_TREBLE_FIELD,
+    IO1_EQ_BANDS,
+    PRODUCT_IO1,
+    audio_control_name,
+    caps,
     loudness_gain_to_wire,
 )
 from .coordinator import LitheAudioCoordinator
@@ -23,17 +33,42 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: LitheAudioCoordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
+    coordinator: LitheAudioCoordinator = hass.data[DOMAIN][entry.entry_id][
+        DATA_COORDINATOR
+    ]
     product = entry.data[CONF_PRODUCT]
     c = caps(product)
 
     entities: list[NumberEntity] = []
     if c["eq_select"]:
-        entities.extend((
-            LitheEqBandNumber(coordinator, entry, "Treble", "dsp_treble", DSP_TREBLE_FIELD),
-            LitheEqBandNumber(coordinator, entry, "Mid", "dsp_mid", DSP_MID_FIELD),
-            LitheEqBandNumber(coordinator, entry, "Bass", "dsp_bass", DSP_BASS_FIELD),
-        ))
+        if product == PRODUCT_IO1:
+            entities.extend(
+                LitheEqBandNumber(
+                    coordinator,
+                    entry,
+                    name,
+                    state_attr,
+                    field,
+                    unique_key=unique_key,
+                    minimum=-6,
+                    maximum=6,
+                    lock_to_normal=False,
+                )
+                for name, state_attr, field, unique_key in IO1_EQ_BANDS
+            )
+        else:
+            entities.extend((
+                LitheEqBandNumber(
+                    coordinator, entry, "Treble", "dsp_treble",
+                    DSP_TREBLE_FIELD,
+                ),
+                LitheEqBandNumber(
+                    coordinator, entry, "Mid", "dsp_mid", DSP_MID_FIELD,
+                ),
+                LitheEqBandNumber(
+                    coordinator, entry, "Bass", "dsp_bass", DSP_BASS_FIELD,
+                ),
+            ))
     if c["balance_number"]:
         entities.append(LitheBalanceNumber(coordinator, entry))
     if c["loudness_number"]:
@@ -74,13 +109,37 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
     _attr_mode = NumberMode.SLIDER
     _attr_icon = "mdi:equalizer"
 
-    def __init__(self, coordinator, entry, name: str, state_attr: str, field: int):
+    def __init__(
+        self,
+        coordinator,
+        entry,
+        name: str,
+        state_attr: str,
+        field: int,
+        *,
+        unique_key: str | None = None,
+        minimum: int = -5,
+        maximum: int = 5,
+        lock_to_normal: bool = True,
+    ):
         super().__init__(coordinator, entry)
-        order = {"Treble": 2, "Mid": 3, "Bass": 4}[name]
-        self._attr_name = audio_control_name(order, f"EQ {name}")
-        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_{name.lower()}"
+        order = {
+            "Treble": 2,
+            "Mid": 3,
+            "Bass": 4,
+            "Treble Low 2 kHz": 2,
+            "Treble Mid 4 kHz": 3,
+            "Treble High 6 kHz": 4,
+        }[name]
+        label = f"EQ {name}" if name in {"Treble", "Mid", "Bass"} else name
+        self._attr_name = audio_control_name(order, label)
+        key = unique_key or name.lower()
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_{key}"
         self._state_attr = state_attr
         self._field = field
+        self._minimum = minimum
+        self._maximum = maximum
+        self._lock_to_normal = lock_to_normal
         self._value = 0
         self._optimistic_until: float = 0.0
 
@@ -89,7 +148,10 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state is not None:
             try:
-                self._value = max(-5, min(5, int(float(last_state.state))))
+                self._value = max(
+                    self._minimum,
+                    min(self._maximum, int(float(last_state.state))),
+                )
             except (TypeError, ValueError):
                 pass
             else:
@@ -116,17 +178,21 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
     def native_min_value(self) -> float:
         # HA has no separate read-only NumberEntity mode. A zero-width range
         # keeps the preset's live value visible while disabling slider travel.
-        return self._locked_value() if self._client.state.dsp_eq != 0 else -5.0
+        if self._lock_to_normal and self._client.state.dsp_eq != 0:
+            return self._locked_value()
+        return float(self._minimum)
 
     @property
     def native_max_value(self) -> float:
-        return self._locked_value() if self._client.state.dsp_eq != 0 else 5.0
+        if self._lock_to_normal and self._client.state.dsp_eq != 0:
+            return self._locked_value()
+        return float(self._maximum)
 
     async def async_set_native_value(self, value: float) -> None:
         import time
-        if self._client.state.dsp_eq != 0:
+        if self._lock_to_normal and self._client.state.dsp_eq != 0:
             return
-        self._value = int(value)
+        self._value = max(self._minimum, min(self._maximum, int(value)))
         self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_EQ_BANDS, self._value, self._field)
         self.async_write_ha_state()

@@ -1283,6 +1283,10 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Show today's resolved prayer times + scheduled actions."""
         if user_input is not None:
+            action = user_input.get("_action", "edit")
+            if action == "delete":
+                self._draft.pop("prayer", None)
+                return self.async_create_entry(title="", data=self._draft)
             return await self.async_step_prayer()
 
         # Pull current schedule state from the global prayer data store
@@ -1350,7 +1354,10 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
         description = "\n".join(lines)
 
         schema = vol.Schema({
-            vol.Optional("acknowledge", default=True): bool,
+            vol.Required("_action", default="edit"): vol.In({
+                "edit": "Edit this schedule",
+                "delete": "Delete this schedule",
+            }),
         })
         return self.async_show_form(
             step_id="prayer_view",

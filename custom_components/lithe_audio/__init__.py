@@ -310,6 +310,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         obsolete_unique_ids.append(
             ("number", f"{host}_{entry.entry_id}_loudness")
         )
+    if not product_caps["loudness_switch"]:
+        obsolete_unique_ids.append(
+            ("switch", f"{host}_{entry.entry_id}_loudness_sw")
+        )
+    if not product_caps["nightmode_switch"]:
+        obsolete_unique_ids.append(
+            ("switch", f"{host}_{entry.entry_id}_nightmode")
+        )
     supported_chimes = int(product_caps.get("chimes", 0) or 0)
     obsolete_unique_ids.extend(
         (
