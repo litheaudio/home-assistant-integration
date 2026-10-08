@@ -1,9 +1,0 @@
-{
-  "name": "Lithe Audio",
-  "description": "Local control of Lithe Audio Wi-Fi speakers — media player, multi-room groups, alarms, Prayer Scheduler, DSP/EQ, chimes, favourites, Bluetooth. No cloud.",
-  "render_readme": true,
-  "homeassistant": "2024.1.0",
-  "hacs": "1.32.0",
-  "country": ["GB", "US"],
-  "iot_class": "Local Push"
-}
