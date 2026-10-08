@@ -12,7 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     BT_OFF, BT_ON, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
-    DSP_LOUDNESS, DSP_NIGHTMODE, DSP_TUNING, caps,
+    DSP_LOUDNESS, DSP_NIGHTMODE, DSP_TUNING, audio_control_name, caps,
 )
 from .coordinator import LitheAudioCoordinator
 
@@ -80,7 +80,7 @@ class _LitheBaseSwitch(
 class LitheNightModeSwitch(_LitheBaseSwitch):
     """Night Mode switch using captured DSP sub-MB 0x0C."""
 
-    _attr_name = "Audio — 09 Night Mode"
+    _attr_name = audio_control_name(9, "Night Mode")
     _attr_icon = "mdi:weather-night"
     _restore_state_attr = "dsp_nightmode"
 
@@ -102,10 +102,6 @@ class LitheNightModeSwitch(_LitheBaseSwitch):
             return val == 1
         return self._state
 
-    @property
-    def available(self) -> bool:
-        return super().available and self._client.state.dsp_nightmode is not None
-
     async def async_turn_on(self, **kwargs) -> None:
         import time
         self._state = True
@@ -124,7 +120,7 @@ class LitheNightModeSwitch(_LitheBaseSwitch):
 class LitheLoudnessSwitch(_LitheBaseSwitch):
     """Loudness ON/OFF switch (V3, iO1, V2, PRO)."""
 
-    _attr_name = "Audio — 07 Loudness"
+    _attr_name = audio_control_name(7, "Loudness")
     _attr_icon = "mdi:volume-plus"
     _restore_state_attr = "dsp_loudness"
 
@@ -138,10 +134,6 @@ class LitheLoudnessSwitch(_LitheBaseSwitch):
         if val is not None:
             return val != 0
         return self._state
-
-    @property
-    def available(self) -> bool:
-        return super().available and self._client.state.dsp_loudness is not None
 
     async def async_turn_on(self, **kwargs) -> None:
         self._state = True
@@ -161,7 +153,7 @@ class LitheLoudnessSwitch(_LitheBaseSwitch):
 class LitheHighPassProtectionSwitch(_LitheBaseSwitch):
     """PRO 2 high-pass filter ON/OFF control."""
 
-    _attr_name = "Audio — 08 High Pass Filter"
+    _attr_name = audio_control_name(8, "High Pass Filter")
     _attr_icon = "mdi:filter"
     _restore_state_attr = "dsp_tuning"
 
@@ -173,10 +165,6 @@ class LitheHighPassProtectionSwitch(_LitheBaseSwitch):
     def is_on(self) -> bool:
         value = getattr(self._client.state, "dsp_tuning", None)
         return value == 1 if value is not None else self._state
-
-    @property
-    def available(self) -> bool:
-        return super().available and self._client.state.dsp_tuning is not None
 
     async def async_turn_on(self, **kwargs) -> None:
         self._state = True

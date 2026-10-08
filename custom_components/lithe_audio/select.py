@@ -12,7 +12,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
     DSP_EQ, DSP_HIGHPASS, DSP_OUTPUT, DSP_TUNING,
-    EQ_PRESETS, HP_OPTIONS, OUT_OPTIONS, TUNING_OPTIONS, caps,
+    EQ_PRESETS, HP_OPTIONS, OUT_OPTIONS, TUNING_OPTIONS, audio_control_name,
+    caps,
 )
 from .coordinator import LitheAudioCoordinator
 from .local_favs import MAX_SLOTS, get_local_favs
@@ -78,7 +79,7 @@ class _LitheBaseSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntity):
 class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
     """EQ Preset selector."""
 
-    _attr_name = "Audio — 01 EQ Preset"
+    _attr_name = audio_control_name(1, "EQ Preset")
     _attr_options = EQ_PRESETS
     _attr_icon = "mdi:equalizer"
 
@@ -115,7 +116,7 @@ class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
 class LitheOutputSelect(_LitheBaseSelect, RestoreEntity):
     """Speaker Output selector."""
 
-    _attr_name = "Audio — 06 Speaker Output"
+    _attr_name = audio_control_name(6, "Speaker Output")
     _attr_options = OUT_OPTIONS
     _attr_icon = "mdi:speaker"
 
@@ -152,7 +153,7 @@ class LitheOutputSelect(_LitheBaseSelect, RestoreEntity):
 class LitheHighPassSelect(_LitheBaseSelect, RestoreEntity):
     """PRO 2 high-pass frequency selector (MCU HOSTMCUSETTINGS 0x32)."""
 
-    _attr_name = "Audio — 08 High Pass Frequency"
+    _attr_name = audio_control_name(8, "High Pass Frequency")
     _attr_options = HP_OPTIONS
     _attr_icon = "mdi:filter"
 
@@ -301,7 +302,7 @@ class LitheCastGroupSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntit
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Audio — 10 Cast Group"
+    _attr_name = audio_control_name(10, "Cast Group")
     _attr_icon = "mdi:speaker-multiple"
 
     NONE_LABEL = "(None — local only)"

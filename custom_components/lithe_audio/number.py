@@ -12,7 +12,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
     DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ_BANDS, DSP_MID_FIELD,
-    DSP_LOUDNESS_GAIN, DSP_TREBLE_FIELD, caps, loudness_gain_to_wire,
+    DSP_LOUDNESS_GAIN, DSP_TREBLE_FIELD, audio_control_name, caps,
+    loudness_gain_to_wire,
 )
 from .coordinator import LitheAudioCoordinator
 
@@ -29,9 +30,9 @@ async def async_setup_entry(
     entities: list[NumberEntity] = []
     if c["eq_select"]:
         entities.extend((
-            LitheEqBandNumber(coordinator, entry, "Bass", "dsp_bass", DSP_BASS_FIELD),
-            LitheEqBandNumber(coordinator, entry, "Mid", "dsp_mid", DSP_MID_FIELD),
             LitheEqBandNumber(coordinator, entry, "Treble", "dsp_treble", DSP_TREBLE_FIELD),
+            LitheEqBandNumber(coordinator, entry, "Mid", "dsp_mid", DSP_MID_FIELD),
+            LitheEqBandNumber(coordinator, entry, "Bass", "dsp_bass", DSP_BASS_FIELD),
         ))
     if c["balance_number"]:
         entities.append(LitheBalanceNumber(coordinator, entry))
@@ -75,8 +76,8 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
 
     def __init__(self, coordinator, entry, name: str, state_attr: str, field: int):
         super().__init__(coordinator, entry)
-        order = {"Bass": 2, "Mid": 3, "Treble": 4}[name]
-        self._attr_name = f"Audio — {order:02d} EQ {name}"
+        order = {"Treble": 2, "Mid": 3, "Bass": 4}[name]
+        self._attr_name = audio_control_name(order, f"EQ {name}")
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_{name.lower()}"
         self._state_attr = state_attr
         self._field = field
@@ -129,7 +130,7 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
 class LitheBalanceNumber(_LitheBaseNumber, RestoreEntity):
     """Balance slider: -6 (full left) to +6 (full right)."""
 
-    _attr_name = "Audio — 05 Balance"
+    _attr_name = audio_control_name(5, "Balance")
     _attr_native_min_value = -6
     _attr_native_max_value = 6
     _attr_native_step = 1
@@ -171,7 +172,7 @@ class LitheBalanceNumber(_LitheBaseNumber, RestoreEntity):
 class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
     """PRO 2 loudness gain, enabled by the separate loudness switch."""
 
-    _attr_name = "Audio — 07 Loudness Gain"
+    _attr_name = audio_control_name(7, "Loudness Gain")
     _attr_native_min_value = -10
     _attr_native_max_value = 10
     _attr_native_step = 1

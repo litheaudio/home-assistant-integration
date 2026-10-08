@@ -211,6 +211,15 @@ OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]
 HP_OPTIONS = ["60 Hz", "80 Hz", "100 Hz", "120 Hz"]
 TUNING_OPTIONS = ["Enclosure Mode 13L", "Open Back Mode"]
 
+
+def audio_control_name(order: int, label: str) -> str:
+    """Return an invisibly sortable name for HA's alphabetical device page.
+
+    HTML collapses the repeated spaces to one visible space, while Home
+    Assistant's raw-name sort preserves the requested control sequence.
+    """
+    return f"Audio — {' ' * max(1, 11 - order)}{label}"
+
 # ── Per-product chime counts ────────────────────────────────────────────────
 PRODUCT_CHIMES = {
     # PRO 2 slots 10-14 use legacy embedded asset payloads (songN.wav)

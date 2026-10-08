@@ -187,6 +187,7 @@ class LitheClient:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._artwork_refresh_task: Optional[asyncio.Task] = None
         self._metadata_refresh_task: Optional[asyncio.Task] = None
+        self._dsp_initial_refresh_task: Optional[asyncio.Task] = None
         self._volume_before_mute: int | None = None
         self._last_nonzero_volume: int = self.state.volume
         # Incremented only by valid MB#63 MUTE/UNMUTE feedback. Command code
@@ -301,6 +302,24 @@ class LitheClient:
 
         # Request initial state
         await self.async_refresh()
+        # The HOST-MCU dump is slower than ordinary LUCI reads and some
+        # installations have several speakers. Run it after setup so it can
+        # never hold Home Assistant Core startup, and do it only once per
+        # connection; subsequent changes arrive as live MB#112 pushes.
+        self._dsp_initial_refresh_task = asyncio.create_task(
+            self._delayed_initial_dsp_refresh()
+        )
+
+    async def _delayed_initial_dsp_refresh(self) -> None:
+        """Fetch live DSP state after Core and the entity platforms can start."""
+        try:
+            await asyncio.sleep(2.0)
+            if self.state.connected:
+                await self.async_dsp_refresh()
+        except asyncio.CancelledError:
+            pass
+        except Exception as err:
+            _LOGGER.warning("Delayed DSP startup refresh failed: %s", err)
 
     async def _heartbeat_loop(self) -> None:
         """Re-register every 30s — mirrors Control4 driver behaviour.
@@ -339,6 +358,11 @@ class LitheClient:
             self._artwork_refresh_task.cancel()
         if self._metadata_refresh_task and not self._metadata_refresh_task.done():
             self._metadata_refresh_task.cancel()
+        if (
+            self._dsp_initial_refresh_task
+            and not self._dsp_initial_refresh_task.done()
+        ):
+            self._dsp_initial_refresh_task.cancel()
         if self._writer:
             try:
                 self._writer.close()
@@ -411,12 +435,6 @@ class LitheClient:
 
         # The HTTP page is the confirmed source of Bluetooth service state.
         await self._refresh_bluetooth_http_state()
-
-        # MB#112 replies are delivered to an MB#111 raw TCP tunnel, not back
-        # to the LUCI TLS command socket. Read the HOST MCU directly so every
-        # coordinator refresh starts from the speaker's current DSP state.
-        if self.use_tls:
-            await self.async_dsp_refresh()
 
     async def async_read_nv(self, item: str) -> str | None:
         """Read an NV item via MB#208 SET READ_<item>.

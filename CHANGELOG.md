@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.4.53
+
+- Move the live HOST-MCU DSP read out of the blocking integration setup path.
+  It now runs once as a bounded delayed task after connection instead of on
+  every 30-second coordinator refresh.
+- Continue using LUCI MB#112 pushes for immediate changes made in the Lithe
+  app after the initial live state has been read.
+
+## 1.4.52
+
+- Keep Loudness, High Pass Filter and Night Mode operable whenever the speaker
+  is connected, even while their first live DSP feedback record is pending.
+- Keep non-Normal preset EQ bands visible at their live dB positions while
+  locking their slider ranges against manual changes.
+
+## 1.4.51
+
+- Remove the visible numeric prefixes from audio control names while keeping
+  their requested order on Home Assistant's alphabetically sorted device page.
+- Change the manual EQ order to Preset, Treble, Mid and Bass.
+
 ## 1.4.50
 
 - Order PRO 2 audio controls as EQ preset, bass, mid, treble, balance,
