@@ -46,6 +46,7 @@ class _LitheBaseSwitch(
     CoordinatorEntity[LitheAudioCoordinator], SwitchEntity, RestoreEntity
 ):
     _attr_has_entity_name = True
+    _restore_state_attr: str | None = None
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
@@ -70,6 +71,22 @@ class _LitheBaseSwitch(
         last_state = await self.async_get_last_state()
         if last_state is not None:
             self._state = last_state.state == STATE_ON
+        # Keep dependent entities consistent on first load. For example, an
+        # ON High Pass switch must make High Pass Frequency available, while
+        # an OFF Loudness switch must disable Loudness Gain. This only fills
+        # unknown in-memory state and never sends a command to the speaker.
+        if (
+            self._restore_state_attr
+            and getattr(self._client.state, self._restore_state_attr, None) is None
+        ):
+            setattr(
+                self._client.state,
+                self._restore_state_attr,
+                1 if self._state else 0,
+            )
+            if self._client.state.dsp_state_source == "unknown":
+                self._client.state.dsp_state_source = "restored"
+            self.coordinator.async_set_updated_data(self._client.state)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -81,6 +98,7 @@ class LitheNightModeSwitch(_LitheBaseSwitch):
 
     _attr_name = "Audio — Night Mode"
     _attr_icon = "mdi:weather-night"
+    _restore_state_attr = "dsp_nightmode"
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry)
@@ -120,6 +138,7 @@ class LitheLoudnessSwitch(_LitheBaseSwitch):
 
     _attr_name = "Audio — Loudness"
     _attr_icon = "mdi:volume-plus"
+    _restore_state_attr = "dsp_loudness"
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry)
@@ -152,6 +171,7 @@ class LitheHighPassProtectionSwitch(_LitheBaseSwitch):
 
     _attr_name = "Audio — High Pass Filter"
     _attr_icon = "mdi:filter"
+    _restore_state_attr = "dsp_tuning"
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry)

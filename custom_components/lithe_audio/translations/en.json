@@ -64,13 +64,13 @@
     },
     "number": {
       "bass": {
-        "name": "Audio — Bass"
+        "name": "Audio — EQ Bass"
       },
       "mid": {
-        "name": "Audio — Mid"
+        "name": "Audio — EQ Mid"
       },
       "treble": {
-        "name": "Audio — Treble"
+        "name": "Audio — EQ Treble"
       },
       "balance": {
         "name": "Audio — Balance"

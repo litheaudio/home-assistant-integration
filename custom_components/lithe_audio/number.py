@@ -75,7 +75,7 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
 
     def __init__(self, coordinator, entry, name: str, state_attr: str, field: int):
         super().__init__(coordinator, entry)
-        self._attr_name = f"Audio — {name}"
+        self._attr_name = f"Audio — EQ {name}"
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_{name.lower()}"
         self._state_attr = state_attr
         self._field = field
@@ -186,10 +186,7 @@ class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
     @property
     def available(self) -> bool:
         enabled = self._client.state.dsp_loudness
-        # The firmware does not provide a safe initial DSP settings dump.
-        # Keep the gain usable while state is unknown; once a 0/1 push or a
-        # local switch action is seen, strictly follow the loudness switch.
-        return super().available and (enabled is None or enabled != 0)
+        return super().available and enabled == 1
 
     @property
     def native_value(self) -> float:

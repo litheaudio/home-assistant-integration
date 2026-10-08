@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.48] - 2026-10-08
+
+### Fixed
+
+- Restore High Pass, Loudness and Night Mode into the shared DSP state used
+  by their dependent entities, without transmitting anything to the speaker.
+- Make High Pass Frequency available whenever the restored High Pass Filter
+  is on.
+- Disable Loudness Gain whenever the restored Loudness switch is off.
+- Group the tone controls alphabetically as EQ Bass, EQ Mid, EQ Preset and
+  EQ Treble on the Home Assistant device page.
+
 ## [1.4.47] - 2026-10-08
 
 ### Fixed
