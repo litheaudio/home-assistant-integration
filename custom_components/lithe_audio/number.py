@@ -180,8 +180,8 @@ class LitheLoudnessNumber(_LitheBaseNumber, RestoreEntity):
         except (TypeError, ValueError):
             return
 
-        # UI fallback only. The fresh All_informationGET report is
-        # authoritative and must not be overwritten by stale HA state.
+        # UI fallback only. A genuine MB#112 broadcast remains authoritative
+        # and must not be overwritten by restored HA state.
 
     @property
     def available(self) -> bool:

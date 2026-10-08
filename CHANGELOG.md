@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.46] - 2026-10-08
+
+### Fixed
+
+- Stop treating MB112 subcommand `0x15` as a startup settings read. Direct
+  testing on CR443GP_4083 confirms that it returns only `SUCCESS`, not the
+  current DSP values.
+- Persist every genuine MB112 DSP update received from the speaker or Lithe
+  app and restore that speaker-confirmed snapshot across Home Assistant
+  restarts without transmitting it back to the speaker.
+- Mark diagnostics as `restored` or `speaker` so startup memory can be
+  distinguished from fresh LUCI feedback.
+
 ## [1.4.45] - 2026-10-08
 
 ### Fixed

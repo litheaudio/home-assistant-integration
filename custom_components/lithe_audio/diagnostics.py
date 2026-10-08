@@ -85,8 +85,17 @@ async def async_get_config_entry_diagnostics(
             # DSP / model-specific controls
             "dsp_highpass":      s.dsp_highpass,
             "dsp_tuning":        s.dsp_tuning,
+            "dsp_eq":            s.dsp_eq,
+            "dsp_bass":          s.dsp_bass,
+            "dsp_mid":           s.dsp_mid,
+            "dsp_treble":        s.dsp_treble,
+            "dsp_balance":       s.dsp_balance,
+            "dsp_output":        s.dsp_output,
             "dsp_loudness_enabled": s.dsp_loudness,
             "dsp_loudness_gain": s.dsp_loudness_gain,
+            "dsp_nightmode":     s.dsp_nightmode,
+            "dsp_state_source":  s.dsp_state_source,
+            "dsp_feedback_revision": s.dsp_feedback_revision,
             "dsp_last_raw":       s.dsp_last_raw,
             "dsp_last_decoded":   s.dsp_last_decoded,
         }

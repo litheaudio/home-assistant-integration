@@ -10,7 +10,7 @@ import ssl
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable, ClassVar, Optional
 
 import aiohttp
 
@@ -105,6 +105,38 @@ class SpeakerState:
     dsp_tuning:    int | None = None  # 0x0D: 13L enclosure/open back
     dsp_last_raw: str = ""
     dsp_last_decoded: str = ""
+    # "restored" means HA loaded the last speaker-confirmed snapshot from
+    # storage.  A valid MB#112 update changes this to "speaker" immediately.
+    dsp_state_source: str = "unknown"
+    dsp_feedback_revision: int = 0
+
+    DSP_STATE_FIELDS: ClassVar[tuple[str, ...]] = (
+        "dsp_eq", "dsp_bass", "dsp_mid", "dsp_treble",
+        "dsp_loudness", "dsp_loudness_gain", "dsp_nightmode",
+        "dsp_balance", "dsp_output", "dsp_highpass", "dsp_tuning",
+    )
+
+    def dsp_snapshot(self) -> dict[str, int]:
+        """Return the known DSP values suitable for persistent storage."""
+        return {
+            name: value
+            for name in self.DSP_STATE_FIELDS
+            if isinstance((value := getattr(self, name)), int)
+        }
+
+    def restore_dsp_snapshot(self, values: object) -> bool:
+        """Restore validated DSP values without treating them as live feedback."""
+        if not isinstance(values, dict):
+            return False
+        restored = False
+        for name in self.DSP_STATE_FIELDS:
+            value = values.get(name)
+            if isinstance(value, int):
+                setattr(self, name, value)
+                restored = True
+        if restored:
+            self.dsp_state_source = "restored"
+        return restored
 
     # Player role (per API_NEW page 25): "Free" / "Master" / "Slave"
     # Slave devices cannot trigger chimes — they must be sent to the master.
@@ -329,13 +361,10 @@ class LitheClient:
         We previously tried removing these per a strict spec read and it
         broke track info / source display / play state, so they stay.
         """
-        # Firmware-backed, non-mutating MCU state request. The inner
-        # 00 03 00 15 01 record enters the subcommand-0x15 report path and
-        # broadcasts all current MB#112 settings, including Loudness,
-        # Night Mode, High Pass Filter and PRO 2 loudness gain.
-        if self.use_tls:
-            await self.async_dsp_refresh()
-            await asyncio.sleep(0.05)
+        # Do not send MB#112/0x15 here. Bench testing on CR443GP_4083 shows
+        # that it acknowledges the packet with SUCCESS but does not return a
+        # settings dump. DSP state is learned from genuine MB#112 broadcasts
+        # and restored read-only by the coordinator across HA restarts.
 
         # Standard refresh — speaker responds to all of these
         for mb in (MB_DEVICE_NAME,      # 90  Device Name
@@ -1023,11 +1052,11 @@ class LitheClient:
             )
 
     async def async_dsp_refresh(self) -> None:
-        """Request the MCU's complete current DSP settings report.
+        """Send the vendor 0x15 diagnostic trigger.
 
-        Firmware CR443GP_3713 dispatches subcommand 0x15 to a read-only
-        routine that emits 00 03 00 <subcommand> <value> records. This is the
-        same startup burst observed when the Lithe app opens its EQ screen.
+        CR443GP_4083 acknowledges this with SUCCESS but returns no settings
+        to third-party clients, so normal refresh deliberately does not call
+        it. Keep the exact packet available for protocol diagnostics only.
         """
         sub = bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01])
         header = struct.pack(
@@ -1583,6 +1612,10 @@ class LitheClient:
                 # Apply state updates
                 for attr, val in updates:
                     setattr(self.state, attr, val)
+
+                if updates:
+                    self.state.dsp_state_source = "speaker"
+                    self.state.dsp_feedback_revision += 1
 
                 self.state.dsp_last_decoded = "; ".join(parsed)
 

@@ -168,9 +168,9 @@ class LitheHighPassSelect(_LitheBaseSelect, RestoreEntity):
         if last_state is None or last_state.state not in HP_OPTIONS:
             return
 
-        # Keep the last speaker-confirmed HA value visible until the MCU's
-        # All_informationGET report arrives. Never write restored UI state back
-        # to the speaker during startup.
+        # Keep the last speaker-confirmed HA value visible until a new MB#112
+        # broadcast arrives. Never write restored UI state back to the speaker
+        # during startup.
         self._current = last_state.state
 
     @property

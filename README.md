@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.45** — Synchronises DSP state at startup without overwriting speaker settings.
+**Latest: 1.4.46** — Remembers speaker-confirmed DSP state across Home Assistant restarts without overwriting the speaker.
 
 ---
 
