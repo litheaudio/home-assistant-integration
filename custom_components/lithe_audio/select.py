@@ -23,6 +23,13 @@ from .const import (
     IO1_EQ_PRESETS,
     OUT_OPTIONS,
     PRODUCT_IO1,
+    SUB_CROSSOVER_OPTIONS,
+    SUB_DSP_CROSSOVER,
+    SUB_DSP_PHASE,
+    SUB_DSP_PROFILE,
+    SUB_DSP_SET_FIELD,
+    SUB_PHASE_OPTIONS,
+    SUB_PROFILE_OPTIONS,
     TUNING_OPTIONS,
     audio_control_name,
     caps,
@@ -51,6 +58,12 @@ async def async_setup_entry(
         entities.append(LitheHighPassSelect(coordinator, entry))
     if c["tuning_select"]:
         entities.append(LitheTuningSelect(coordinator, entry))
+    if c["subwoofer_controls"]:
+        entities.extend((
+            LitheSubwooferProfileSelect(coordinator, entry),
+            LitheSubwooferCrossoverSelect(coordinator, entry),
+            LitheSubwooferPhaseSelect(coordinator, entry),
+        ))
 
     # Only expose Cast routing when HA has a real Google Cast group to pick.
     # A selector containing only "None — local only" has no useful action.
@@ -70,7 +83,8 @@ async def async_setup_entry(
         )
         if entity_id:
             registry.async_remove(entity_id)
-    entities.append(LitheFavouriteSaveSlotSelect(coordinator, entry))
+    if c["favourites"]:
+        entities.append(LitheFavouriteSaveSlotSelect(coordinator, entry))
 
     if entities:
         async_add_entities(entities)
@@ -100,6 +114,131 @@ class _LitheBaseSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class LitheSubwooferProfileSelect(_LitheBaseSelect, RestoreEntity):
+    """Micro Subwoofer EQ profile."""
+
+    _attr_name = "Subwoofer — EQ Preset"
+    _attr_options = SUB_PROFILE_OPTIONS
+    _attr_icon = "mdi:equalizer"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = (
+            f"{entry.data['host']}_{entry.entry_id}_sub_profile"
+        )
+
+    @property
+    def current_option(self) -> str:
+        value = self._client.state.sub_profile
+        if isinstance(value, int) and 0 <= value < len(self._attr_options):
+            return self._attr_options[value]
+        return self._current
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in self._attr_options:
+            self._current = last_state.state
+            if self._client.state.sub_profile is None:
+                self._client.state.restore_dsp_snapshot({
+                    "sub_profile": self._attr_options.index(self._current),
+                })
+
+    async def async_select_option(self, option: str) -> None:
+        index = self._attr_options.index(option)
+        self._current = option
+        await self._client.async_dsp_command(
+            SUB_DSP_PROFILE, index, SUB_DSP_SET_FIELD
+        )
+        self.coordinator.async_set_updated_data(self._client.state)
+
+
+class LitheSubwooferCrossoverSelect(_LitheBaseSelect, RestoreEntity):
+    """Micro Subwoofer custom crossover frequency."""
+
+    _attr_name = "Subwoofer — Crossover"
+    _attr_options = SUB_CROSSOVER_OPTIONS
+    _attr_icon = "mdi:sine-wave"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = (
+            f"{entry.data['host']}_{entry.entry_id}_sub_crossover"
+        )
+        self._current = self._attr_options[0]
+
+    @property
+    def available(self) -> bool:
+        return self._client.state.connected and self._client.state.sub_profile == 2
+
+    @property
+    def current_option(self) -> str:
+        value = self._client.state.sub_crossover
+        if isinstance(value, int) and 0 <= value < len(self._attr_options):
+            return self._attr_options[value]
+        return self._current
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in self._attr_options:
+            self._current = last_state.state
+            if self._client.state.sub_crossover is None:
+                self._client.state.restore_dsp_snapshot({
+                    "sub_crossover": self._attr_options.index(self._current),
+                })
+
+    async def async_select_option(self, option: str) -> None:
+        index = self._attr_options.index(option)
+        self._current = option
+        await self._client.async_dsp_command(
+            SUB_DSP_CROSSOVER, index, SUB_DSP_SET_FIELD
+        )
+        self.async_write_ha_state()
+
+
+class LitheSubwooferPhaseSelect(_LitheBaseSelect, RestoreEntity):
+    """Micro Subwoofer custom phase."""
+
+    _attr_name = "Subwoofer — Phase"
+    _attr_options = SUB_PHASE_OPTIONS
+    _attr_icon = "mdi:rotate-3d-variant"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_sub_phase"
+        self._current = self._attr_options[0]
+
+    @property
+    def available(self) -> bool:
+        return self._client.state.connected and self._client.state.sub_profile == 2
+
+    @property
+    def current_option(self) -> str:
+        value = self._client.state.sub_phase
+        if isinstance(value, int) and 0 <= value < len(self._attr_options):
+            return self._attr_options[value]
+        return self._current
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in self._attr_options:
+            self._current = last_state.state
+            if self._client.state.sub_phase is None:
+                self._client.state.restore_dsp_snapshot({
+                    "sub_phase": self._attr_options.index(self._current),
+                })
+
+    async def async_select_option(self, option: str) -> None:
+        index = self._attr_options.index(option)
+        self._current = option
+        await self._client.async_dsp_command(
+            SUB_DSP_PHASE, index, SUB_DSP_SET_FIELD
+        )
         self.async_write_ha_state()
 
 

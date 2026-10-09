@@ -109,6 +109,7 @@ class LitheAudioCard extends HTMLElement {
     const src     = attrs.source_name || attrs.source || '';
     const artwork = attrs.entity_picture;
     const favs    = attrs.favourites || [];
+    const supportsFavourites = attrs.supports_favourites !== false;
 
     const sourceList = attrs.source_list || [];
 
@@ -389,9 +390,9 @@ class LitheAudioCard extends HTMLElement {
             <button class="ctrl" data-action="next" title="Next">
               <ha-icon icon="mdi:skip-next"></ha-icon>
             </button>
-            <button class="ctrl heart" data-action="heart" title="Save to favourite">
+            ${supportsFavourites ? `<button class="ctrl heart" data-action="heart" title="Save to favourite">
               <ha-icon icon="mdi:heart"></ha-icon>
-            </button>
+            </button>` : ''}
           </div>
 
           <div class="volume-row">
@@ -410,7 +411,7 @@ class LitheAudioCard extends HTMLElement {
           </div>
           ` : ''}
 
-          ${this._config.show_favourites ? `
+          ${this._config.show_favourites && supportsFavourites ? `
           <div class="section">
             <div class="section-title">
               <span>❤ Favourites</span>

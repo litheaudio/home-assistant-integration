@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CHIME_NAMES, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_CHIMES,
+    CHIME_NAMES, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, PRODUCT_CHIMES, caps,
 )
 from .coordinator import LitheAudioCoordinator
 from .local_favs import MAX_SLOTS
@@ -34,16 +34,13 @@ async def async_setup_entry(
     for slot in range(1, chime_count + 1):
         entities.append(LitheChimeButton(coordinator, entry, slot))
 
-    # Play-favourite buttons (slots 1-10) — press to play saved favourite.
-    # Looks up HA-side favourites first (more reliable than native MB#70
-    # which fails with GENERIC_FAV_SAVE_FAIL on Direct URL streams), then
-    # falls back to the speaker's onboard favourite.
-    for slot in range(1, MAX_SLOTS + 1):
-        entities.append(LithePlayFavouriteButton(coordinator, entry, slot))
+    if caps(product)["favourites"]:
+        for slot in range(1, MAX_SLOTS + 1):
+            entities.append(LithePlayFavouriteButton(coordinator, entry, slot))
+        entities.append(LitheHeartButton(coordinator, entry))
 
-    # Heart button: saves current track to the NEXT free favourite slot.
-    # Press once to add current track to favourites without picking a slot.
-    entities.append(LitheHeartButton(coordinator, entry))
+    if caps(product)["subwoofer_controls"]:
+        entities.append(LitheSubwooferSaveButton(coordinator, entry))
 
     # Diagnostics
     entities.append(LitheRebootButton(coordinator, entry))
@@ -112,6 +109,34 @@ class LitheChimeButton(ButtonEntity):
     async def async_press(self) -> None:
         _LOGGER.info("Chime button %d pressed", self._slot)
         await self._client.async_play_chime(self._slot)
+
+
+class LitheSubwooferSaveButton(_LitheBaseButton):
+    """Commit every custom Micro Subwoofer setting as one user action."""
+
+    _attr_name = "Subwoofer — Save Changes"
+    _attr_icon = "mdi:content-save"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = (
+            f"{entry.data['host']}_{entry.entry_id}_sub_save"
+        )
+
+    @property
+    def available(self) -> bool:
+        return self._client.state.connected and self._client.state.sub_profile == 2
+
+    async def async_press(self) -> None:
+        state = self._client.state
+        await self._client.async_save_subwoofer_custom(
+            gain=state.sub_gain if state.sub_gain is not None else 50,
+            crossover=(
+                state.sub_crossover if state.sub_crossover is not None else 0
+            ),
+            phase=state.sub_phase if state.sub_phase is not None else 0,
+            lowpass=state.sub_lowpass if state.sub_lowpass is not None else 1,
+        )
 
 
 class LitheRebootButton(_LitheBaseButton):

@@ -31,7 +31,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     BT_OFF, BT_ON, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, MB_SOURCE,
-    PRODUCT_NAMES, PRODUCT_SOURCES, SOURCES,
+    PRODUCT_MICRO, PRODUCT_NAMES, PRODUCT_SOURCES, SOURCES,
+    SUB_DSP_PROFILE, SUB_DSP_SET_FIELD, SUB_PROFILE_OPTIONS, caps,
 )
 from .coordinator import LitheAudioCoordinator
 from .media_delegate import (
@@ -116,6 +117,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         self._entry = entry
         self._product = entry.data[CONF_PRODUCT]
         self._client = coordinator.client
+        self._supports_favourites = bool(
+            caps(self._product).get("favourites", True)
+        )
 
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_player"
         self._attr_name = (
@@ -277,6 +281,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         current = self.source
         if current and current not in base:
             base.insert(0, current)
+
+        if not self._supports_favourites:
+            return base
 
         base.append("♥ Save Current Track")
 
@@ -482,8 +489,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             "volume_percent":  s.volume,           # 0-100 not 0.0-1.0
             "shuffle":         s.shuffle,
             "repeat":          s.repeat,
+            "supports_favourites": self._supports_favourites,
             # Favourites — list of {slot, name} for picker UIs
-            "favourites":      merged_favs,
+            "favourites":      merged_favs if self._supports_favourites else [],
             # Bluetooth
             "bt_status":       s.bt_status,
         }
@@ -652,6 +660,11 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
     @property
     def sound_mode(self) -> str | None:
         """Current EQ preset, exposed as a Denon-style sound_mode."""
+        if self._product == PRODUCT_MICRO:
+            idx = getattr(self._client.state, "sub_profile", None)
+            if idx is not None and 0 <= idx < len(SUB_PROFILE_OPTIONS):
+                return SUB_PROFILE_OPTIONS[idx]
+            return None
         from .const import EQ_PRESETS
         idx = getattr(self._client.state, "dsp_eq", None)
         if idx is not None and 0 <= idx < len(EQ_PRESETS):
@@ -660,11 +673,26 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
     @property
     def sound_mode_list(self) -> list[str] | None:
+        if self._product == PRODUCT_MICRO:
+            return list(SUB_PROFILE_OPTIONS)
         from .const import EQ_PRESETS
         return list(EQ_PRESETS)
 
     async def async_select_sound_mode(self, sound_mode: str) -> None:
         """Set EQ preset by friendly name (Denon-style sound_mode)."""
+        if self._product == PRODUCT_MICRO:
+            if sound_mode not in SUB_PROFILE_OPTIONS:
+                _LOGGER.warning(
+                    "select_sound_mode: unknown Micro profile %r",
+                    sound_mode,
+                )
+                return
+            await self._client.async_dsp_command(
+                SUB_DSP_PROFILE,
+                SUB_PROFILE_OPTIONS.index(sound_mode),
+                SUB_DSP_SET_FIELD,
+            )
+            return
         from .const import EQ_PRESETS, DSP_EQ
         if sound_mode not in EQ_PRESETS:
             _LOGGER.warning(
@@ -733,6 +761,8 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             return
 
         if source == "♥ Save Current Track":
+            if not self._supports_favourites:
+                return
             from .local_favs import (
                 async_capture_current_favourite,
                 get_local_favs,
@@ -752,6 +782,8 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
         # ── Favourite picker ──────────────────────────────────────────
         if source.startswith("♥ Favourite "):
+            if not self._supports_favourites:
+                return
             try:
                 slot_part = source[len("♥ Favourite "):].split(":", 1)[0].strip()
                 slot = int(slot_part)
@@ -853,6 +885,8 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             return
 
         if media_id.startswith(_SAVE_FAVOURITE_PREFIX):
+            if not self._supports_favourites:
+                return
             from .local_favs import (
                 async_capture_current_favourite,
                 get_local_favs,
@@ -876,6 +910,8 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # Favourite by content_id (no announce flow — favourites resume
         # the speaker's own playback engine)
         if media_id.startswith(_FAV_PREFIX):
+            if not self._supports_favourites:
+                return
             slot = int(media_id[len(_FAV_PREFIX):])
             await self._client.async_play_favourite(slot)
             return
@@ -1240,6 +1276,8 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             return self._build_direct_url_folder()
 
         if media_content_id == _SAVE_FAVOURITE_FOLDER:
+            if not self._supports_favourites:
+                raise BrowseError("Favourites are not supported by this model")
             from .local_favs import MAX_SLOTS, get_local_favs
             manager = get_local_favs(self.hass)
             name_overrides = {
@@ -1299,15 +1337,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # Build root: favourites + media sources
         children: list[BrowseMedia] = []
 
-        # Expand to choose one of all ten named favourite destinations.
-        children.append(BrowseMedia(
-            title="Save Current Track",
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=_SAVE_FAVOURITE_FOLDER,
-            media_content_type="library",
-            can_play=False,
-            can_expand=True,
-        ))
+        if self._supports_favourites:
+            children.append(BrowseMedia(
+                title="Save Current Track",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=_SAVE_FAVOURITE_FOLDER,
+                media_content_type="library",
+                can_play=False,
+                can_expand=True,
+            ))
 
         # 1a) HA-side favourites (saved by Heart button or fav_save service)
         local_slots: set[int] = set()
@@ -1315,7 +1353,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         try:
             from .local_favs import get_local_favs
             local_favs_mgr = get_local_favs(self.hass)
-            if local_favs_mgr:
+            if self._supports_favourites and local_favs_mgr:
                 for fav in local_favs_mgr.list_all():
                     slot = int(fav["slot"])
                     if fav.get("name") and fav["name"] != "(empty)":
@@ -1335,7 +1373,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             _LOGGER.debug("Failed to list local favourites: %s", e)
 
         # 1b) Firmware favourites (Spotify/AirPlay saved on speaker)
-        for fav in self._client.state.favourites:
+        for fav in (
+            self._client.state.favourites if self._supports_favourites else []
+        ):
             slot = int(fav.get("slot", 0) or 0)
             if slot in local_slots:
                 continue

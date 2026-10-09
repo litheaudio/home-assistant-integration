@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     BT_OFF, BT_ON, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN,
     DSP_LOUDNESS, DSP_NIGHTMODE, DSP_TUNING, audio_control_name, caps,
+    SUB_DSP_LOWPASS, SUB_DSP_SET_FIELD,
 )
 from .coordinator import LitheAudioCoordinator
 
@@ -35,6 +36,8 @@ async def async_setup_entry(
         entities.append(LitheHighPassProtectionSwitch(coordinator, entry))
     if c["bluetooth_switch"]:
         entities.append(LitheBluetoothSwitch(coordinator, entry))
+    if c["subwoofer_controls"]:
+        entities.append(LitheSubwooferLowPassSwitch(coordinator, entry))
     # Do not expose AUX/SPDIF switches through MB#50. The working C4 driver
     # treats MB#50 as feedback and does not activate inputs with it.
 
@@ -126,6 +129,42 @@ class LitheNightModeSwitch(_LitheBaseSwitch):
         await self._client.async_dsp_command(DSP_NIGHTMODE, 0)
         self.async_write_ha_state()
 
+
+class LitheSubwooferLowPassSwitch(_LitheBaseSwitch):
+    """Micro Subwoofer custom low-pass filter."""
+
+    _attr_name = "Subwoofer — Low Pass Filter"
+    _attr_icon = "mdi:filter"
+    _restore_state_attr = "sub_lowpass"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = (
+            f"{entry.data['host']}_{entry.entry_id}_sub_lowpass"
+        )
+
+    @property
+    def available(self) -> bool:
+        return self._client.state.connected and self._client.state.sub_profile == 2
+
+    @property
+    def is_on(self) -> bool:
+        value = self._client.state.sub_lowpass
+        return value == 1 if value is not None else self._state
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._state = True
+        await self._client.async_dsp_command(
+            SUB_DSP_LOWPASS, 1, SUB_DSP_SET_FIELD
+        )
+        self.coordinator.async_set_updated_data(self._client.state)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._state = False
+        await self._client.async_dsp_command(
+            SUB_DSP_LOWPASS, 0, SUB_DSP_SET_FIELD
+        )
+        self.coordinator.async_set_updated_data(self._client.state)
 
 class LitheLoudnessSwitch(_LitheBaseSwitch):
     """Loudness ON/OFF switch (V3, iO1, V2, PRO)."""

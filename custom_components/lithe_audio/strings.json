@@ -267,15 +267,7 @@
           "volume": "Volume (0-100)",
           "fade_in_seconds": "Fade-in duration (seconds, 0 = no fade)",
           "snooze_minutes": "Default snooze (minutes)",
-          "_action": "Action",
-          "sunrise_enabled": "Sunrise simulation — ramp lights before alarm",
-          "sunrise_lights": "Lights to ramp (Hue, etc.)",
-          "sunrise_minutes": "Ramp duration (minutes before alarm)",
-          "sunrise_start_kelvin": "Starting colour temperature (warm, Kelvin)",
-          "sunrise_end_kelvin": "Ending colour temperature (cool, Kelvin)",
-          "sunrise_start_brightness": "Starting brightness (1-255)",
-          "sunrise_end_brightness": "Ending brightness (1-255)",
-          "sunrise_never_dim": "Never dim a light below its current brightness"
+          "_action": "Action"
         }
       },
       "groups": {

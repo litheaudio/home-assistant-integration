@@ -21,6 +21,8 @@ from .const import (
     DSP_TREBLE_FIELD,
     IO1_EQ_BANDS,
     PRODUCT_IO1,
+    SUB_DSP_GAIN,
+    SUB_DSP_SET_FIELD,
     audio_control_name,
     caps,
     loudness_gain_to_wire,
@@ -73,6 +75,8 @@ async def async_setup_entry(
         entities.append(LitheBalanceNumber(coordinator, entry))
     if c["loudness_number"]:
         entities.append(LitheLoudnessNumber(coordinator, entry))
+    if c["subwoofer_controls"]:
+        entities.append(LitheSubwooferGainNumber(coordinator, entry))
 
     if entities:
         async_add_entities(entities)
@@ -195,6 +199,48 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
         self._value = max(self._minimum, min(self._maximum, int(value)))
         self._optimistic_until = time.monotonic() + 5.0
         await self._client.async_dsp_command(DSP_EQ_BANDS, self._value, self._field)
+        self.async_write_ha_state()
+
+
+class LitheSubwooferGainNumber(_LitheBaseNumber, RestoreEntity):
+    """Micro Subwoofer custom-profile gain, 0..100."""
+
+    _attr_name = "Subwoofer — Gain"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 100
+    _attr_native_step = 1
+    _attr_mode = NumberMode.SLIDER
+    _attr_icon = "mdi:volume-high"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_sub_gain"
+        self._value = 50
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._client.state.sub_profile == 2
+
+    @property
+    def native_value(self) -> float:
+        value = self._client.state.sub_gain
+        return float(value if value is not None else self._value)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and self._client.state.sub_gain is None:
+            try:
+                self._value = max(0, min(100, int(float(last_state.state))))
+            except (TypeError, ValueError):
+                return
+            self._client.state.restore_dsp_snapshot({"sub_gain": self._value})
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._value = max(0, min(100, int(value)))
+        await self._client.async_dsp_command(
+            SUB_DSP_GAIN, self._value, SUB_DSP_SET_FIELD
+        )
         self.async_write_ha_state()
 
 

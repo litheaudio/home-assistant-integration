@@ -214,6 +214,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     ClientCls = LitheClientLS9 if product in LS9_PRODUCTS else LitheClient
     client = ClientCls(host, port, use_tls, cert, key, local_ip)
+    client.product = product
+    client.supports_favourites = bool(caps(product).get("favourites", True))
 
     coordinator = LitheAudioCoordinator(hass, client, entry.entry_id)
     await coordinator.async_config_entry_first_refresh()
@@ -246,6 +248,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 data={**entry.data, CONF_PRODUCT: capability_product},
             )
             product = capability_product
+            client.product = product
+            client.supports_favourites = bool(
+                caps(product).get("favourites", True)
+            )
         else:
             _LOGGER.error(
                 "Speaker %s reports model variant %r but it conflicts with the active "
@@ -318,6 +324,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         obsolete_unique_ids.append(
             ("switch", f"{host}_{entry.entry_id}_nightmode")
         )
+    if not product_caps["favourites"]:
+        obsolete_unique_ids.extend([
+            ("button", f"{host}_{entry.entry_id}_heart_save"),
+            ("select", f"{host}_{entry.entry_id}_fav_save_slot"),
+            *(
+                ("button", f"{host}_{entry.entry_id}_play_fav_{slot}")
+                for slot in range(1, 11)
+              ),
+          ])
+    if not product_caps["subwoofer_controls"]:
+        obsolete_unique_ids.extend([
+            ("select", f"{host}_{entry.entry_id}_sub_profile"),
+            ("number", f"{host}_{entry.entry_id}_sub_gain"),
+            ("select", f"{host}_{entry.entry_id}_sub_crossover"),
+            ("select", f"{host}_{entry.entry_id}_sub_phase"),
+            ("switch", f"{host}_{entry.entry_id}_sub_lowpass"),
+            ("button", f"{host}_{entry.entry_id}_sub_save"),
+        ])
     supported_chimes = int(product_caps.get("chimes", 0) or 0)
     obsolete_unique_ids.extend(
         (

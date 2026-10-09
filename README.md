@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.62** — remove unsupported Loudness and Night Mode controls from iO1.
+**Latest: 1.4.70** — remove unrelated lighting controls from speaker alarms.
 
 ---
 
@@ -34,7 +34,7 @@ Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on po
 | iO1 | LS10 | ✅ | 10 | EQ, Output, Balance | On/Off | ✅ |
 | WiFi Speaker V2 | LS9 | — | 0 | EQ, Output, Balance | On/Off | ✅ |
 | WiFi PRO | LS9 | — | 6 | EQ, Output, Balance | On/Off | ✅ |
-| Micro Subwoofer | LS9 | — | 0 | — | — | ✅ |
+| Micro Subwoofer | LS9 | — | 0 | Profiles, gain, crossover, phase, low-pass | — | ✅ |
 
 ---
 

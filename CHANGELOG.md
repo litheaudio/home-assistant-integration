@@ -1,5 +1,76 @@
 # Changelog
 
+## 1.4.70
+
+- Remove the sunrise/light-ramp section from the alarm create/edit form.
+- Remove the light-ramp scheduler so Lithe speaker alarms remain audio-only.
+- Migrate saved alarms by deleting legacy lighting fields during startup,
+  preventing old configurations from controlling lights invisibly.
+
+## 1.4.69
+
+- Add dedicated `WiFiMicroSubwoofer` EQ profiles: Subwoofer, Speaker and
+  Custom, backed by the Micro's MB112 profile command.
+- Expose Custom-only gain (0-100), crossover (60/120/180/240 Hz), phase
+  (0/180 degrees), low-pass filter and Save Changes controls.
+- Request the complete live Micro DSP state on refresh and decode its MB112
+  profile, gain, crossover, phase and low-pass feedback independently from
+  the LS10 speaker EQ protocol.
+- Make Save Changes re-apply the complete Custom profile atomically from the
+  user's perspective; the firmware API has no separate persistence opcode.
+- Show the Micro profiles in the media player's sound-mode control and keep
+  all existing LS10 model behaviour unchanged.
+
+## 1.4.68
+
+- Remove favourites from `WiFiMicroSubwoofer`: no MB70 polling, play/save
+  buttons, save-slot selector, source-menu actions, Browse Media entries or
+  custom-card favourite controls are exposed for that model.
+- Remove stale Micro Subwoofer favourite entities from Home Assistant's
+  entity registry during integration reload; other models are unchanged.
+
+## 1.4.67
+
+- Fix EQ/DSP writes on the plain-TCP LS9 products
+  `WiFiPROCeilingSpeaker`, `WiFiCeilingSpeakerV2` and
+  `WiFiMicroSubwoofer`: MB112 binary commands now use an LS9 transactional
+  connection and the documented `0xAAAA` route instead of being dropped by
+  the LS10 persistent-writer guard.
+- Keep the TLS/client-certificate LS10 DSP path unchanged.
+
+## 1.4.66
+
+- Send both mute and unmute as explicit `MUTE` / `UNMUTE` SET commands on
+  MB40 (`PLAYCONTROL`) for every source.
+- Use MB63 (`CASTMUTE_STATUS`) as the sole mute-state authority; volume
+  feedback no longer fabricates or overrides mute state.
+- Remove the Spotify MB64 volume-zero mute workaround introduced in 1.4.64.
+
+## 1.4.65
+
+- Fix all three iO1 EQ band writes by using the documented MB112 SET
+  selectors `0x02`, `0x04` and `0x06`; `0x01`, `0x03` and `0x05` are the
+  corresponding GET selectors and do not apply slider changes.
+- Add byte-exact coverage for the iO1 preset, balance, speaker-output and EQ
+  band setter payloads.
+
+## 1.4.64
+
+- Avoid the CR443GP_4083 Spotify firmware mute latch that acknowledges MB40
+  `UNMUTE` while leaving audible output closed.
+- Mute Spotify through MCU-routed MB64 volume `0` and restore the captured
+  non-zero volume on unmute; AirPlay and Cast retain their verified MB40
+  command routes.
+- Make redundant Spotify unmute requests no-ops so alarm and notification
+  preparation cannot silence an already-playing stream.
+
+## 1.4.63
+
+- Fix iO1 Treble Low, Treble Mid and Treble High writes by using the iO1
+  MB112 band selectors `0x01`, `0x03` and `0x05` before the gain value.
+- Preserve the generic `0x02`, `0x04` and `0x06` EQ selectors for WiFi PRO 2,
+  WiFi V3 and the other existing model profiles.
+
 ## 1.4.62
 
 - Remove the unsupported Loudness and Night Mode controls from iO1 speakers.

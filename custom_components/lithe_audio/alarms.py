@@ -8,10 +8,6 @@ Provides per-speaker (or multi-speaker) alarms with:
   - Snooze/dismiss via services
 
 Persisted to .storage/lithe_audio.alarms so alarms survive HA restart.
-
-Design inspiration: hass-wake-alarm by scootaash (Sonos sunrise alarms).
-We adopt the per-day toggle model and persistent storage; we drop the
-light-ramp feature since this integration is audio-only.
 """
 
 from __future__ import annotations
@@ -49,6 +45,17 @@ REPEAT_DAILY   = "daily"
 REPEAT_WEEKLY  = "weekly"
 REPEAT_MONTHLY = "monthly"
 
+LEGACY_LIGHT_FIELDS = {
+    "sunrise_enabled",
+    "sunrise_lights",
+    "sunrise_minutes",
+    "sunrise_start_kelvin",
+    "sunrise_end_kelvin",
+    "sunrise_start_brightness",
+    "sunrise_end_brightness",
+    "sunrise_never_dim",
+}
+
 
 def new_alarm_id() -> str:
     return f"alarm_{uuid.uuid4().hex[:8]}"
@@ -73,17 +80,6 @@ def default_alarm() -> dict[str, Any]:
         "volume":          60,
         "fade_in_seconds": 0,
         "snooze_minutes":  9,
-        # ── Sunrise simulation (light ramp before audio fires) ────
-        # Lights ramp from warm+dim to cool+bright over `sunrise_minutes`
-        # ending AT the alarm time. Inspired by the Wake Alarm thread.
-        "sunrise_enabled":      False,
-        "sunrise_lights":       [],     # list of light entity_ids
-        "sunrise_minutes":      20,     # ramp duration before alarm time
-        "sunrise_start_kelvin": 2200,   # warm at start
-        "sunrise_end_kelvin":   4500,   # cool at end
-        "sunrise_start_brightness": 5,  # 1-255 (5 = barely lit)
-        "sunrise_end_brightness":   220,# near full
-        "sunrise_never_dim":    True,   # don't dim if light already brighter
     }
 
 
@@ -109,6 +105,14 @@ class LitheAlarmManager:
         data = await self._store.async_load()
         if data and isinstance(data, dict):
             self._alarms = data.get("alarms", {}) or {}
+        migrated = False
+        for alarm in self._alarms.values():
+            for field in LEGACY_LIGHT_FIELDS:
+                if field in alarm:
+                    alarm.pop(field, None)
+                    migrated = True
+        if migrated:
+            await self.async_save()
         _LOGGER.info("Loaded %d alarms from storage", len(self._alarms))
         # Schedule each enabled alarm
         for alarm in self._alarms.values():
@@ -199,19 +203,9 @@ class LitheAlarmManager:
             except Exception:
                 pass
             self._unsub.pop(alarm_id, None)
-        # Also cancel sunrise ramp if pending
-        sunrise_key = f"{alarm_id}__sunrise"
-        if sunrise_key in self._unsub:
-            try:
-                self._unsub[sunrise_key]()
-            except Exception:
-                pass
-            self._unsub.pop(sunrise_key, None)
-        # Cancel volume fade and any active sunrise ramp task.
-        for task_key in (alarm_id, f"{alarm_id}__sunrise_task"):
-            task = self._fade_tasks.pop(task_key, None)
-            if task:
-                task.cancel()
+        task = self._fade_tasks.pop(alarm_id, None)
+        if task:
+            task.cancel()
 
     def _next_fire_time(self, alarm: dict[str, Any]) -> datetime | None:
         """Compute the next datetime this alarm should fire."""
@@ -299,28 +293,6 @@ class LitheAlarmManager:
             alarm_id, alarm.get("name"), fire_at.isoformat(),
         )
 
-        # If sunrise is enabled and starts in the future, schedule the
-        # ramp start `sunrise_minutes` before the fire time. The audio
-        # fires AT fire_at, but the lights start ramping earlier.
-        if alarm.get("sunrise_enabled") and alarm.get("sunrise_lights"):
-            ramp_minutes = int(alarm.get("sunrise_minutes", 20))
-            ramp_start_at = fire_at - timedelta(minutes=ramp_minutes)
-            if ramp_start_at > dt_util.now():
-                async def _sunrise_due(_now: datetime) -> None:
-                    await self._fire_sunrise(alarm_id)
-
-                ramp_unsub = ev_helper.async_track_point_in_time(
-                    self.hass, _sunrise_due, ramp_start_at,
-                )
-                # Stash under a sunrise-specific key so it doesn't collide
-                # with the main fire unsub.
-                self._unsub[f"{alarm_id}__sunrise"] = ramp_unsub
-                _LOGGER.info(
-                    "Alarm %s sunrise ramp starts at %s (%d min before %s)",
-                    alarm_id, ramp_start_at.isoformat(), ramp_minutes,
-                    fire_at.isoformat(),
-                )
-
     # ── Firing ────────────────────────────────────────────────────────
 
     async def _fire(self, alarm_id: str) -> None:
@@ -343,81 +315,6 @@ class LitheAlarmManager:
         else:
             # Reschedule for next occurrence
             self._schedule(alarm)
-
-    async def _fire_sunrise(self, alarm_id: str) -> None:
-        """Start the sunrise light ramp for an alarm.
-
-        Runs for `sunrise_minutes` and ends exactly when the audio fires.
-        Lights ramp linearly from start (warm + dim) to end (cool + bright)
-        in 3-second steps.
-        """
-        alarm = self._alarms.get(alarm_id)
-        if not alarm or not alarm.get("enabled"):
-            return
-        lights = alarm.get("sunrise_lights") or []
-        if not lights:
-            return
-
-        minutes = int(alarm.get("sunrise_minutes", 20))
-        start_k = int(alarm.get("sunrise_start_kelvin", 2200))
-        end_k   = int(alarm.get("sunrise_end_kelvin",   4500))
-        start_b = int(alarm.get("sunrise_start_brightness", 5))
-        end_b   = int(alarm.get("sunrise_end_brightness", 220))
-        never_dim = bool(alarm.get("sunrise_never_dim", True))
-
-        _LOGGER.info(
-            "Alarm %s sunrise ramp: %d lights, %d min, %dK→%dK, %d→%d brightness",
-            alarm_id, len(lights), minutes, start_k, end_k, start_b, end_b,
-        )
-
-        async def _ramp():
-            try:
-                # Track per-light "starting brightness" so we honour never_dim
-                start_brightness_per_light: dict[str, int] = {}
-                if never_dim:
-                    for ent_id in lights:
-                        st = self.hass.states.get(ent_id)
-                        if st and st.attributes.get("brightness") is not None:
-                            start_brightness_per_light[ent_id] = int(
-                                st.attributes["brightness"]
-                            )
-
-                # 3-second step interval
-                step_seconds = 3
-                total_seconds = max(1, minutes * 60)
-                steps = total_seconds // step_seconds
-                for i in range(1, steps + 1):
-                    if not self._alarms.get(alarm_id, {}).get("enabled"):
-                        # Alarm was dismissed mid-ramp
-                        return
-                    frac = i / steps
-                    cur_b = int(start_b + (end_b - start_b) * frac)
-                    cur_k = int(start_k + (end_k - start_k) * frac)
-                    for ent_id in lights:
-                        existing_b = start_brightness_per_light.get(ent_id, 0)
-                        target_b = max(cur_b, existing_b) if never_dim else cur_b
-                        try:
-                            await self.hass.services.async_call(
-                                "light", "turn_on",
-                                {
-                                    "entity_id":   ent_id,
-                                    "brightness":  target_b,
-                                    "kelvin":      cur_k,
-                                    "transition":  step_seconds,
-                                },
-                                blocking=False,
-                            )
-                        except Exception as e:
-                            _LOGGER.debug(
-                                "Sunrise turn_on for %s failed: %s", ent_id, e
-                            )
-                    await asyncio.sleep(step_seconds)
-            except asyncio.CancelledError:
-                _LOGGER.info("Alarm %s sunrise ramp cancelled", alarm_id)
-                return
-
-        task = self.hass.async_create_task(_ramp())
-        self._fade_tasks[f"{alarm_id}__sunrise_task"] = task
 
     async def _do_play(self, alarm: dict[str, Any]) -> None:
         """Trigger the audio for this alarm."""

@@ -642,26 +642,6 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                 "snooze_minutes":  int(user_input.get("snooze_minutes",
                                                      existing.get("snooze_minutes", 9))),
                 "enabled":         bool(user_input.get("enabled", True)),
-                # Sunrise simulation fields
-                "sunrise_enabled": bool(user_input.get("sunrise_enabled", False)),
-                "sunrise_lights":  list(user_input.get("sunrise_lights", []) or []),
-                "sunrise_minutes": int(user_input.get("sunrise_minutes",
-                                                    existing.get("sunrise_minutes", 20))),
-                "sunrise_start_kelvin":
-                    int(user_input.get("sunrise_start_kelvin",
-                                       existing.get("sunrise_start_kelvin", 2200))),
-                "sunrise_end_kelvin":
-                    int(user_input.get("sunrise_end_kelvin",
-                                       existing.get("sunrise_end_kelvin", 4500))),
-                "sunrise_start_brightness":
-                    int(user_input.get("sunrise_start_brightness",
-                                       existing.get("sunrise_start_brightness", 5))),
-                "sunrise_end_brightness":
-                    int(user_input.get("sunrise_end_brightness",
-                                       existing.get("sunrise_end_brightness", 220))),
-                "sunrise_never_dim":
-                    bool(user_input.get("sunrise_never_dim",
-                                        existing.get("sunrise_never_dim", True))),
             }
             if patch["repeat"] == REPEAT_ONE_OFF and not patch["date"]:
                 # A one-off alarm needs a concrete date. Resolve an omitted
@@ -821,31 +801,6 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                 vol.All(int, vol.Range(min=0, max=600)),
             vol.Optional("snooze_minutes", default=existing.get("snooze_minutes", 9)):
                 vol.All(int, vol.Range(min=1, max=60)),
-            # ── Sunrise simulation (light ramp before audio) ────────────
-            vol.Optional("sunrise_enabled",
-                        default=bool(existing.get("sunrise_enabled", False))): bool,
-            vol.Optional("sunrise_lights",
-                        default=existing.get("sunrise_lights", []) or []):
-                selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="light", multiple=True)
-                ),
-            vol.Optional("sunrise_minutes",
-                        default=int(existing.get("sunrise_minutes", 20))):
-                vol.All(int, vol.Range(min=1, max=120)),
-            vol.Optional("sunrise_start_kelvin",
-                        default=int(existing.get("sunrise_start_kelvin", 2200))):
-                vol.All(int, vol.Range(min=1500, max=6500)),
-            vol.Optional("sunrise_end_kelvin",
-                        default=int(existing.get("sunrise_end_kelvin", 4500))):
-                vol.All(int, vol.Range(min=1500, max=6500)),
-            vol.Optional("sunrise_start_brightness",
-                        default=int(existing.get("sunrise_start_brightness", 5))):
-                vol.All(int, vol.Range(min=1, max=255)),
-            vol.Optional("sunrise_end_brightness",
-                        default=int(existing.get("sunrise_end_brightness", 220))):
-                vol.All(int, vol.Range(min=1, max=255)),
-            vol.Optional("sunrise_never_dim",
-                        default=bool(existing.get("sunrise_never_dim", True))): bool,
             vol.Required("_action", default="save"): vol.In(action_options),
         }
         title_word = "Edit Alarm" if editing else "New Alarm"

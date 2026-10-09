@@ -26,6 +26,8 @@ from .const import (
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
     DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
+    PRODUCT_MICRO, SUB_DSP_CROSSOVER, SUB_DSP_GAIN, SUB_DSP_LOWPASS,
+    SUB_DSP_PHASE, SUB_DSP_PROFILE, SUB_DSP_SET_FIELD,
     product_from_model,
 )
 
@@ -104,6 +106,11 @@ class SpeakerState:
     dsp_output:    int | None = None  # 0x0F: 0=Mono 1=Stereo 2=Left 3=Right
     dsp_highpass:  int | None = None  # 0x32: 60/80/100/120/150 Hz
     dsp_tuning:    int | None = None  # 0x0D: 13L enclosure/open back
+    sub_profile:   int | None = None  # 0x01: Subwoofer/Speaker/Custom
+    sub_gain:      int | None = None  # 0x02: 0..100
+    sub_crossover: int | None = None  # 0x03: four crossover indices
+    sub_phase:     int | None = None  # 0x04: 0/180 degrees
+    sub_lowpass:   int | None = None  # 0x05: disabled/enabled
     dsp_last_raw: str = ""
     dsp_last_decoded: str = ""
     # "restored" means HA loaded the last speaker-confirmed snapshot from
@@ -115,6 +122,8 @@ class SpeakerState:
         "dsp_eq", "dsp_bass", "dsp_mid", "dsp_treble",
         "dsp_loudness", "dsp_loudness_gain", "dsp_nightmode",
         "dsp_balance", "dsp_output", "dsp_highpass", "dsp_tuning",
+        "sub_profile", "sub_gain", "sub_crossover", "sub_phase",
+        "sub_lowpass",
     )
 
     def dsp_snapshot(self) -> dict[str, int]:
@@ -181,6 +190,8 @@ class LitheClient:
         self.local_ip = local_ip
 
         self.state = SpeakerState()
+        self.product: str = ""
+        self.supports_favourites: bool = True
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._buf = b""
@@ -189,11 +200,7 @@ class LitheClient:
         self._artwork_refresh_task: Optional[asyncio.Task] = None
         self._metadata_refresh_task: Optional[asyncio.Task] = None
         self._dsp_initial_refresh_task: Optional[asyncio.Task] = None
-        self._volume_before_mute: int | None = None
         self._last_nonzero_volume: int = self.state.volume
-        # Incremented only by valid MB#63 MUTE/UNMUTE feedback. Command code
-        # uses this to distinguish a real state transition from local state.
-        self._mute_feedback_revision: int = 0
         # Bluetooth ON/OFF is controlled by an HTTP endpoint. Serialize those
         # requests and retain the requested state briefly so delayed MB#210
         # packets cannot undo a freshly verified web setting.
@@ -415,9 +422,10 @@ class LitheClient:
         await self._send(0x02, MB_NETWORK_INFO, "MACADDR")
         await asyncio.sleep(0.05)
 
-        # MB#70 Favourites — SET FAV_LIST is the documented query form
-        await self._send(0x02, MB_FAVOURITES, "FAV_LIST")
-        await asyncio.sleep(0.05)
+        # MB#70 is not implemented by the WiFi Micro Subwoofer.
+        if self.supports_favourites:
+            await self._send(0x02, MB_FAVOURITES, "FAV_LIST")
+            await asyncio.sleep(0.05)
 
         # MB#208 NV reads are serialized because responses contain only the
         # value, not the requested key. Model selects the product capability
@@ -493,6 +501,8 @@ class LitheClient:
         await self._send(0x02, MB_BROWSE, "GETUI:HOME")
 
     async def async_request_favourites(self) -> None:
+        if not self.supports_favourites:
+            return
         await self._send(0x02, MB_FAVOURITES, "FAV_LIST")
 
     # ── Commands ───────────────────────────────────────────────────────────
@@ -527,43 +537,15 @@ class LitheClient:
     async def async_mute(self, mute: bool) -> None:
         """Mute / unmute speaker.
 
-        The working Control4 driver sends MUTE/UNMUTE through MB#40. MB#63
-        is feedback carrying the resulting mute state.
+        MB#40 PLAYCONTROL accepts the explicit MUTE/UNMUTE command. MB#63
+        CASTMUTE_STATUS is the sole authority for the resulting state.
         """
-        if mute:
-            if self.state.volume > 0:
-                self._volume_before_mute = self.state.volume
-            await self._send(
-                0x02, MB_TRANSPORT, MUTE_ON,
-                remote_id=self._mute_remote_id(),
-            )
-            return
-
-        # Spotify/AirPlay normally use RID 0xAAAA; Cast requires MCU route
-        # 0x0000. Only MB#63 proves that the hardware state actually changed.
-        feedback_revision = self._mute_feedback_revision
-        primary_remote_id = self._mute_remote_id()
         await self._send(
-            0x02, MB_TRANSPORT, MUTE_OFF,
-            remote_id=primary_remote_id,
+            0x02,
+            MB_TRANSPORT,
+            MUTE_ON if mute else MUTE_OFF,
+            remote_id=self._mute_remote_id(),
         )
-        restore_volume = self._volume_before_mute or self._last_nonzero_volume
-        await asyncio.sleep(0.35)
-
-        confirmed_unmuted = (
-            self._mute_feedback_revision != feedback_revision
-            and not self.state.muted
-        )
-        # Only recover volume if device feedback actually reports zero after
-        # UNMUTE. Normal Spotify playback retains its pre-mute MB#64 value.
-        if confirmed_unmuted and self.state.volume <= 0 and restore_volume > 0:
-            await self._send(
-                0x02, MB_VOLUME, str(restore_volume), remote_id=0x0000,
-            )
-            self.state.volume = restore_volume
-        self._last_nonzero_volume = restore_volume
-        self._volume_before_mute = None
-        self._notify()
 
     async def async_play(self) -> None:
         await self._send(0x02, MB_TRANSPORT, TRANSPORT_PLAY)
@@ -664,6 +646,8 @@ class LitheClient:
 
     async def async_play_favourite(self, slot: int) -> None:
         """Play a saved favourite by slot (MB#70)."""
+        if not self.supports_favourites:
+            return
         await self._send(0x02, MB_FAVOURITES, f"FAV_PLAY:{int(slot)}")
 
     async def async_save_favourite(self, slot: int) -> None:
@@ -676,6 +660,8 @@ class LitheClient:
         source (Spotify Connect, Airable, etc.). Embedded chimes and
         Direct URL cues cannot be saved.
         """
+        if not self.supports_favourites:
+            return
         slot = max(1, min(40, int(slot)))
         await self._send(0x02, MB_FAVOURITES, f"FAV_SAVE:{slot}")
         # Refresh favourite list so UI reflects the new entry
@@ -1087,16 +1073,30 @@ class LitheClient:
             DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS,
             DSP_HIGHPASS, DSP_LOUDNESS, DSP_LOUDNESS_GAIN,
             DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT,
-            DSP_TREBLE_FIELD, DSP_TUNING,
+            DSP_TREBLE_FIELD, DSP_TUNING, IO1_TREBLE_HIGH_FIELD,
+            IO1_TREBLE_LOW_FIELD, IO1_TREBLE_MID_FIELD,
+            PRODUCT_MICRO, SUB_DSP_CROSSOVER, SUB_DSP_GAIN,
+            SUB_DSP_LOWPASS, SUB_DSP_PHASE, SUB_DSP_PROFILE,
         )
 
         attr: str | None = None
         state_value = value
-        if sub_mb == DSP_EQ_BANDS:
+        if self.product == PRODUCT_MICRO:
+            attr = {
+                SUB_DSP_PROFILE: "sub_profile",
+                SUB_DSP_GAIN: "sub_gain",
+                SUB_DSP_CROSSOVER: "sub_crossover",
+                SUB_DSP_PHASE: "sub_phase",
+                SUB_DSP_LOWPASS: "sub_lowpass",
+            }.get(sub_mb)
+        elif sub_mb == DSP_EQ_BANDS:
             attr = {
                 DSP_BASS_FIELD: "dsp_bass",
                 DSP_MID_FIELD: "dsp_mid",
                 DSP_TREBLE_FIELD: "dsp_treble",
+                IO1_TREBLE_HIGH_FIELD: "dsp_bass",
+                IO1_TREBLE_MID_FIELD: "dsp_mid",
+                IO1_TREBLE_LOW_FIELD: "dsp_treble",
             }.get(field)
         else:
             attr = {
@@ -1507,12 +1507,10 @@ class LitheClient:
             if mute_state in {"1", "MUTE"}:
                 self.state.muted = True
                 self.state.mute_state_known = True
-                self._mute_feedback_revision += 1
                 _LOGGER.info("Speaker confirmed mute state through MB#63: MUTE")
             elif mute_state in {"0", "UNMUTE"}:
                 self.state.muted = False
                 self.state.mute_state_known = True
-                self._mute_feedback_revision += 1
                 _LOGGER.info("Speaker confirmed mute state through MB#63: UNMUTE")
 
         elif mbid == MB_SOURCE:
@@ -1659,6 +1657,8 @@ class LitheClient:
                     DSP_HIGHPASS, DSP_LOUDNESS, DSP_LOUDNESS_GAIN,
                     DSP_MID_FIELD, DSP_NIGHTMODE,
                     DSP_OUTPUT, DSP_TREBLE_FIELD, DSP_TUNING,
+                    PRODUCT_MICRO, SUB_DSP_CROSSOVER, SUB_DSP_GAIN,
+                    SUB_DSP_LOWPASS, SUB_DSP_PHASE, SUB_DSP_PROFILE,
                 )
 
                 def _signed_8(b: int) -> int:
@@ -1685,6 +1685,14 @@ class LitheClient:
                     DSP_HIGHPASS:  ("dsp_highpass",  _unsigned),
                     DSP_TUNING:    ("dsp_tuning",    _boolean),
                 }
+                if self.product == PRODUCT_MICRO:
+                    _DSP_MAP = {
+                        SUB_DSP_PROFILE: ("sub_profile", _unsigned),
+                        SUB_DSP_GAIN: ("sub_gain", _unsigned),
+                        SUB_DSP_CROSSOVER: ("sub_crossover", _unsigned),
+                        SUB_DSP_PHASE: ("sub_phase", _boolean),
+                        SUB_DSP_LOWPASS: ("sub_lowpass", _boolean),
+                    }
                 _DSP_FIELD_MAP: dict[tuple[int, int], tuple[str, callable]] = {
                     # All_informationGET returns getter field IDs 01/03/05.
                     # App changes use setter IDs 02/04/06, so decode both.
@@ -2277,10 +2285,23 @@ class LitheClientLS9(LitheClient):
     LS9 firmware only allows one TCP connection at a time.
     """
 
+    @staticmethod
+    def _build_binary_packet(
+        cmd_type: int,
+        mbid: int,
+        payload: bytes,
+        remote_id: int = 0xAAAA,
+    ) -> bytes:
+        """Build an LS9 LUCI packet carrying an opaque tunnel payload."""
+        header = struct.pack(
+            "<HBHBHH", remote_id, cmd_type, mbid, 0, 0x0000, len(payload)
+        )
+        return header + payload + b"\x00"
+
     async def async_transact(
         self,
         mbid: int,
-        payload: str,
+        payload: str | bytes,
         cmd_type: int = 0x02,
         remote_id: int = 0xAAAA,
     ) -> list[tuple[int, str]]:
@@ -2303,7 +2324,12 @@ class LitheClientLS9(LitheClient):
             await asyncio.sleep(0.15)
 
             # Send command
-            writer.write(self._build_packet(cmd_type, mbid, payload, remote_id))
+            packet = (
+                self._build_binary_packet(cmd_type, mbid, payload, remote_id)
+                if isinstance(payload, bytes)
+                else self._build_packet(cmd_type, mbid, payload, remote_id)
+            )
+            writer.write(packet)
             await writer.drain()
 
             # Read responses for up to 1.5s
@@ -2354,6 +2380,80 @@ class LitheClientLS9(LitheClient):
         except Exception as e:
             _LOGGER.debug("LS9 transact %s MB#%d: %s", self.host, mbid, e)
         return responses
+
+    async def async_dsp_command(
+        self,
+        sub_mb: int,
+        value: int,
+        field: int = 0x02,
+    ) -> None:
+        """Send an MCU/DSP setting through an LS9 transactional session.
+
+        LS9 has no persistent writer, so the LS10 implementation would drop
+        every command at its no-writer guard. The legacy API carries the same
+        opaque MCU payload on MB112, but uses the documented 0xAAAA route on
+        a short-lived plain TCP connection.
+        """
+        byte_val = (
+            value & 0xFF
+            if value >= 0
+            else 0xF0 | min(0x0F, abs(value))
+        )
+        payload = bytes([
+            0x00,
+            0x04,
+            (sub_mb >> 8) & 0xFF,
+            sub_mb & 0xFF,
+            field & 0xFF,
+            byte_val,
+        ])
+        _LOGGER.info(
+            "TX LS9 DSP MB#112 sub=0x%02x field=0x%02x val=%d: %s",
+            sub_mb,
+            field,
+            value,
+            " ".join(f"{byte:02X}" for byte in payload),
+        )
+        await self.async_transact(
+            MB_DSP,
+            payload,
+            cmd_type=0x02,
+            remote_id=0xAAAA,
+        )
+        self._record_local_dsp_command(sub_mb, value, field)
+
+    async def async_subwoofer_refresh(self) -> None:
+        """Request every live Micro Subwoofer setting from its MCU."""
+        if self.product != PRODUCT_MICRO:
+            return
+        await self.async_transact(
+            MB_DSP,
+            bytes.fromhex("00 03 00 00 00"),
+            cmd_type=0x02,
+            remote_id=0xAAAA,
+        )
+
+    async def async_save_subwoofer_custom(
+        self,
+        gain: int,
+        crossover: int,
+        phase: int,
+        lowpass: int,
+    ) -> None:
+        """Apply the complete Custom profile to the Micro Subwoofer."""
+        for sub_mb, value in (
+            (SUB_DSP_PROFILE, 2),
+            (SUB_DSP_GAIN, max(0, min(100, int(gain)))),
+            (SUB_DSP_CROSSOVER, max(0, min(3, int(crossover)))),
+            (SUB_DSP_PHASE, 1 if phase else 0),
+            (SUB_DSP_LOWPASS, 1 if lowpass else 0),
+        ):
+            await self.async_dsp_command(sub_mb, value, SUB_DSP_SET_FIELD)
+
+    async def async_refresh(self) -> None:
+        """Refresh ordinary LUCI state plus Micro Subwoofer MCU settings."""
+        await super().async_refresh()
+        await self.async_subwoofer_refresh()
 
     async def _send(
         self,

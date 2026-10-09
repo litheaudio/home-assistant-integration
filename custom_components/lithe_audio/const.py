@@ -106,6 +106,8 @@ SOURCES = {
     30: "Airable",
 }
 
+SPOTIFY_SOURCE_ID = 4
+
 # Sources actually supported per product (used for source_list)
 PRODUCT_SOURCES = {
     PRODUCT_PRO2:  [0, 1, 4, 9, 13, 14, 19, 21, 22, 23, 24, 27, 28, 30],
@@ -214,9 +216,32 @@ DSP_TUNING    = 0x0D   # 0=13L enclosure, 1=open-back protection
 DSP_STATUS_ALL = 0x15  # read-only MCU settings report trigger
 DSP_TUNNEL_PORT = 4444 # vendor-documented MB#111 TCP tunnel example port
 
+# WiFi Micro Subwoofer MCU profile (LS9 MB112 tunnel data). The vendor
+# workbook defines command IDs 0x02..0x05 and the 0x01 feedback / 0x02 setter
+# fields. PROFILE is included in the full-state report immediately before
+# GAIN and follows the same command layout at ID 0x01.
+SUB_DSP_PROFILE = 0x01
+SUB_DSP_GAIN = 0x02
+SUB_DSP_CROSSOVER = 0x03
+SUB_DSP_PHASE = 0x04
+SUB_DSP_LOWPASS = 0x05
+SUB_DSP_FEEDBACK_FIELD = 0x01
+SUB_DSP_SET_FIELD = 0x02
+SUB_PROFILE_OPTIONS = ["Subwoofer", "Speaker", "Custom"]
+SUB_CROSSOVER_OPTIONS = ["60 Hz", "120 Hz", "180 Hz", "240 Hz"]
+SUB_PHASE_OPTIONS = ["0 degrees", "180 degrees"]
+
 DSP_BASS_FIELD   = 0x06
 DSP_MID_FIELD    = 0x04
 DSP_TREBLE_FIELD = 0x02
+
+# The MCU command table pairs odd GET selectors with even SET selectors:
+#   01/02 = Treble Low, 03/04 = Treble Mid, 05/06 = Treble High.
+# HA writes must use the even selector from each pair.  Using the odd feedback
+# selector produces a successful MB112 envelope without changing the DSP.
+IO1_TREBLE_LOW_FIELD  = 0x02
+IO1_TREBLE_MID_FIELD  = 0x04
+IO1_TREBLE_HIGH_FIELD = 0x06
 
 
 def loudness_gain_to_wire(value: int | float) -> int:
@@ -230,9 +255,9 @@ IO1_EQ_PRESETS = ["Outdoor", "Indoor", "Pendent"]
 # Keep the legacy state/unique-id keys so existing HA entities are renamed
 # in place instead of being duplicated during upgrade.
 IO1_EQ_BANDS = (
-    ("Treble Low 2 kHz", "dsp_treble", DSP_TREBLE_FIELD, "treble"),
-    ("Treble Mid 4 kHz", "dsp_mid", DSP_MID_FIELD, "mid"),
-    ("Treble High 6 kHz", "dsp_bass", DSP_BASS_FIELD, "bass"),
+    ("Treble Low 2 kHz", "dsp_treble", IO1_TREBLE_LOW_FIELD, "treble"),
+    ("Treble Mid 4 kHz", "dsp_mid", IO1_TREBLE_MID_FIELD, "mid"),
+    ("Treble High 6 kHz", "dsp_bass", IO1_TREBLE_HIGH_FIELD, "bass"),
 )
 OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]
 HP_OPTIONS = ["60 Hz", "80 Hz", "100 Hz", "120 Hz"]
@@ -291,6 +316,7 @@ CHIME_NAMES = {
 #   loudness_switch  — on/off loudness
 #   nightmode_switch — Night Mode on/off
 #   bluetooth_switch — BT on/off + pair/disconnect (all products)
+#   favourites       — native/local favourite controls and media entries
 PRODUCT_CAPS = {
     PRODUCT_PRO2: {
         "chimes":           14,
@@ -306,6 +332,8 @@ PRODUCT_CAPS = {
         "bluetooth_switch": True,
         "aux_in_switch":    True,
         "spdif_in_switch":  True,
+        "favourites":       True,
+        "subwoofer_controls": False,
     },
     PRODUCT_V3: {
         "chimes":           14,
@@ -321,6 +349,8 @@ PRODUCT_CAPS = {
         "bluetooth_switch": True,
         "aux_in_switch":    False,
         "spdif_in_switch":  False,
+        "favourites":       True,
+        "subwoofer_controls": False,
     },
     PRODUCT_IO1: {
         "chimes":           10,
@@ -336,6 +366,8 @@ PRODUCT_CAPS = {
         "bluetooth_switch": True,
         "aux_in_switch":    False,
         "spdif_in_switch":  False,
+        "favourites":       True,
+        "subwoofer_controls": False,
     },
     PRODUCT_V2: {
         "chimes":           0,
@@ -351,6 +383,8 @@ PRODUCT_CAPS = {
         "bluetooth_switch": True,
         "aux_in_switch":    False,
         "spdif_in_switch":  False,
+        "favourites":       True,
+        "subwoofer_controls": False,
     },
     PRODUCT_PRO: {
         "chimes":           6,
@@ -366,6 +400,8 @@ PRODUCT_CAPS = {
         "bluetooth_switch": True,
         "aux_in_switch":    False,
         "spdif_in_switch":  False,
+        "favourites":       True,
+        "subwoofer_controls": False,
     },
     PRODUCT_MICRO: {
         "chimes":           0,
@@ -381,6 +417,8 @@ PRODUCT_CAPS = {
         "bluetooth_switch": True,    # BT on; no DSP for now
         "aux_in_switch":    False,
         "spdif_in_switch":  False,
+        "favourites":       False,
+        "subwoofer_controls": True,
     },
 }
 
@@ -399,6 +437,8 @@ def caps(product: str) -> dict:
         "loudness_switch":  False,
         "nightmode_switch": False,
         "bluetooth_switch": False,
+        "favourites":       False,
+        "subwoofer_controls": False,
     })
 
 # ── LSSDP discovery ─────────────────────────────────────────────────────────
