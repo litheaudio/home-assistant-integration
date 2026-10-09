@@ -8,7 +8,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DATA_COORDINATOR, DOMAIN
+from .const import CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, caps
 from .coordinator import LitheAudioCoordinator
 from .local_favs import MAX_SLOTS, get_local_favs
 
@@ -19,6 +19,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: LitheAudioCoordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
+    if not caps(entry.data[CONF_PRODUCT])["favourites"]:
+        return
     entities = [
         LitheFavouriteNameText(coordinator, entry, slot)
         for slot in range(1, MAX_SLOTS + 1)

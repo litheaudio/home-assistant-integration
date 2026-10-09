@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.4.74
+
+- Apply the MB111 raw MCU tunnel transport to `WiFiMicroSubwoofer` as well as
+  WiFi Speaker V2 and `WiFiPROCeilingSpeaker`.
+- Send Micro profile, gain, crossover, phase and low-pass writes through the
+  LS9 tunnel and read its complete live DSP report back through that tunnel.
+- Retain the documented RemoteID `0xAAAA` MB112 fallback when an LS9 firmware
+  build cannot create the MB111 listener.
+
+## 1.4.73
+
+- Restore the WiFi Speaker V2 primary media player to the top of Home
+  Assistant's Controls panel using its original `A Player` entity sort name.
+- Send WiFi Speaker V2 and `WiFiPROCeilingSpeaker` EQ, balance, output,
+  loudness and night-mode commands through the vendor-documented MB111 raw
+  MCU tunnel instead of treating network MB112 as the primary command path.
+- Retain a documented RemoteID `0xAAAA` MB112 fallback for early LS9 firmware
+  that does not expose the tunnel listener.
+- Keep the WiFi Micro Subwoofer's verified direct MCU route and every LS10
+  model path unchanged.
+
+## 1.4.72
+
+- Read the live MCU DSP state after a WiFi v3 or WiFi PRO 2 EQ preset change,
+  so treble, mid and bass immediately reflect the values applied by the
+  speaker instead of retaining the previous slider positions.
+- Retry the non-blocking startup DSP read when the MCU tunnel is not ready on
+  its first attempt, allowing Speaker Output and the other DSP controls to
+  initialize from the live speaker state rather than restored HA state.
+- Keep the LS9 transport and model-specific controls unchanged.
+
+## 1.4.71
+
+- Fix LS9/Micro Subwoofer MB112 EQ writes and live-state requests by routing
+  them to the MCU with RemoteID `0x0000`; LS10 transport remains unchanged.
+- Stop creating all favourite-name and save-name text entities for
+  `WiFiMicroSubwoofer`, and remove stale copies from the entity registry.
+- Remove Alarms and Prayer Schedule from the Micro Subwoofer options menu,
+  exclude the model from alarm target choices and prevent prayer schedules
+  from starting for its config entry.
+- Preserve grouping and ordinary media playback for the Micro Subwoofer.
+
 ## 1.4.70
 
 - Remove the sunrise/light-ramp section from the alarm create/edit form.

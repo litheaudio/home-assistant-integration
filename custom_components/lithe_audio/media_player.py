@@ -31,7 +31,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     BT_OFF, BT_ON, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, MB_SOURCE,
-    PRODUCT_MICRO, PRODUCT_NAMES, PRODUCT_SOURCES, SOURCES,
+    PRODUCT_MICRO, PRODUCT_NAMES, PRODUCT_SOURCES, PRODUCT_V2, SOURCES,
     SUB_DSP_PROFILE, SUB_DSP_SET_FIELD, SUB_PROFILE_OPTIONS, caps,
 )
 from .coordinator import LitheAudioCoordinator
@@ -108,10 +108,6 @@ async def async_setup_entry(
 class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlayerEntity):
     """Lithe Audio speaker media player entity."""
 
-    # This is the device's primary entity, so use the speaker name directly
-    # instead of appending a generic entity name such as "A Player".
-    _attr_has_entity_name = False
-
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry
@@ -122,11 +118,18 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         )
 
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_player"
-        self._attr_name = (
-            self._client.state.name
-            or entry.title.rsplit(" (", 1)[0]
-            or PRODUCT_NAMES.get(self._product, "Lithe Audio")
-        )
+        if self._product == PRODUCT_V2:
+            # Restore the original V2 sort key so its primary player remains
+            # above the model's many Audio controls on HA's device page.
+            self._attr_has_entity_name = True
+            self._attr_name = "A Player"
+        else:
+            self._attr_has_entity_name = False
+            self._attr_name = (
+                self._client.state.name
+                or entry.title.rsplit(" (", 1)[0]
+                or PRODUCT_NAMES.get(self._product, "Lithe Audio")
+            )
 
         # Build source list from product capability matrix.
         #

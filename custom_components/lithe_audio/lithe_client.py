@@ -25,7 +25,7 @@ from .const import (
     TRANSPORT_NEXT,
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
-    DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
+    DSP_EQ, DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
     PRODUCT_MICRO, SUB_DSP_CROSSOVER, SUB_DSP_GAIN, SUB_DSP_LOWPASS,
     SUB_DSP_PHASE, SUB_DSP_PROFILE, SUB_DSP_SET_FIELD,
     product_from_model,
@@ -200,6 +200,7 @@ class LitheClient:
         self._artwork_refresh_task: Optional[asyncio.Task] = None
         self._metadata_refresh_task: Optional[asyncio.Task] = None
         self._dsp_initial_refresh_task: Optional[asyncio.Task] = None
+        self._dsp_readback_task: Optional[asyncio.Task] = None
         self._last_nonzero_volume: int = self.state.volume
         # Bluetooth ON/OFF is controlled by an HTTP endpoint. Serialize those
         # requests and retain the requested state briefly so delayed MB#210
@@ -312,8 +313,9 @@ class LitheClient:
         await self.async_refresh()
         # The HOST-MCU dump is slower than ordinary LUCI reads and some
         # installations have several speakers. Run it after setup so it can
-        # never hold Home Assistant Core startup, and do it only once per
-        # connection; subsequent changes arrive as live MB#112 pushes.
+        # never hold Home Assistant Core startup. The background task retries
+        # briefly while the MCU tunnel comes online; later changes arrive as
+        # live MB#112 pushes.
         self._dsp_initial_refresh_task = asyncio.create_task(
             self._delayed_initial_dsp_refresh()
         )
@@ -321,9 +323,15 @@ class LitheClient:
     async def _delayed_initial_dsp_refresh(self) -> None:
         """Fetch live DSP state after Core and the entity platforms can start."""
         try:
-            await asyncio.sleep(2.0)
-            if self.state.connected:
-                await self.async_dsp_refresh()
+            # The MCU tunnel often becomes available after the main LUCI
+            # session. Retry capability misses so restored HA state is always
+            # replaced by the speaker's live settings when the tunnel appears.
+            for delay in (2.0, 2.0, 4.0):
+                await asyncio.sleep(delay)
+                if not self.state.connected:
+                    return
+                if await self.async_dsp_refresh():
+                    return
         except asyncio.CancelledError:
             pass
         except Exception as err:
@@ -371,6 +379,8 @@ class LitheClient:
             and not self._dsp_initial_refresh_task.done()
         ):
             self._dsp_initial_refresh_task.cancel()
+        if self._dsp_readback_task and not self._dsp_readback_task.done():
+            self._dsp_readback_task.cancel()
         if self._writer:
             try:
                 self._writer.close()
@@ -1064,6 +1074,30 @@ class LitheClient:
             # can be restored after HA restarts. Any later speaker/app push
             # remains authoritative and overwrites it.
             self._record_local_dsp_command(sub_mb, value, field)
+            if sub_mb == DSP_EQ and self.state.connected:
+                self._schedule_dsp_readback()
+
+    def _schedule_dsp_readback(self) -> None:
+        """Debounce a live readback after a preset changes derived EQ bands."""
+        if self._dsp_readback_task and not self._dsp_readback_task.done():
+            self._dsp_readback_task.cancel()
+        self._dsp_readback_task = asyncio.create_task(
+            self._delayed_dsp_readback()
+        )
+
+    async def _delayed_dsp_readback(self) -> None:
+        """Read MCU-derived values after the preset has finished applying."""
+        try:
+            for delay in (0.6, 1.5):
+                await asyncio.sleep(delay)
+                if not self.state.connected:
+                    return
+                if await self.async_dsp_refresh():
+                    return
+        except asyncio.CancelledError:
+            pass
+        except Exception as err:
+            _LOGGER.debug("DSP preset readback failed: %s", err)
 
     def _record_local_dsp_command(
         self, sub_mb: int, value: int, field: int
@@ -1119,7 +1153,7 @@ class LitheClient:
         self.state.dsp_feedback_revision += 1
         self._notify()
 
-    async def async_dsp_refresh(self) -> None:
+    async def async_dsp_refresh(self) -> bool:
         """Read the current HOST-MCU settings through the MB#111 tunnel.
 
         MB#112 on the TLS LUCI socket is the LS-to-MCU transport envelope. Its
@@ -1129,7 +1163,7 @@ class LitheClient:
         """
         if not self._writer or self._writer.is_closing():
             _LOGGER.debug("DSP live refresh skipped because writer is unavailable")
-            return
+            return False
 
         sub = bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01])
         async with self._dsp_refresh_lock:
@@ -1164,6 +1198,7 @@ class LitheClient:
                         "RX DSP live tunnel report: %d bytes", len(raw)
                     )
                     self._handle_push(MB_DSP, raw, DSP_REMOTE_ID)
+                    return True
                 else:
                     # Several firmware builds accept the tunnel request but do
                     # not implement the full-state report. Live MB#112 pushes
@@ -1179,6 +1214,7 @@ class LitheClient:
                         await tunnel_writer.wait_closed()
                     except (ConnectionError, OSError):
                         pass
+        return False
 
     async def _async_open_dsp_tunnel(
         self,
@@ -2387,13 +2423,7 @@ class LitheClientLS9(LitheClient):
         value: int,
         field: int = 0x02,
     ) -> None:
-        """Send an MCU/DSP setting through an LS9 transactional session.
-
-        LS9 has no persistent writer, so the LS10 implementation would drop
-        every command at its no-writer guard. The legacy API carries the same
-        opaque MCU payload on MB112, but uses the documented 0xAAAA route on
-        a short-lived plain TCP connection.
-        """
+        """Send an MCU/DSP setting through the documented LS9 TCP tunnel."""
         byte_val = (
             value & 0xFF
             if value >= 0
@@ -2408,30 +2438,111 @@ class LitheClientLS9(LitheClient):
             byte_val,
         ])
         _LOGGER.info(
-            "TX LS9 DSP MB#112 sub=0x%02x field=0x%02x val=%d: %s",
+            "TX LS9 DSP tunnel sub=0x%02x field=0x%02x val=%d: %s",
             sub_mb,
             field,
             value,
             " ".join(f"{byte:02X}" for byte in payload),
         )
-        await self.async_transact(
-            MB_DSP,
-            payload,
-            cmd_type=0x02,
-            remote_id=0xAAAA,
-        )
+        tunnel_writer: asyncio.StreamWriter | None = None
+        try:
+            async with self._dsp_refresh_lock:
+                _reader, tunnel_writer = await self._async_open_ls9_dsp_tunnel()
+                tunnel_writer.write(payload)
+                await tunnel_writer.drain()
+        except Exception as err:
+            # A small number of early LS9 builds expose MB112 directly but do
+            # not create the MB111 listener. Keep that documented route as a
+            # fallback, using the legacy 0xAAAA RemoteID from the LUCI spec.
+            _LOGGER.debug(
+                "LS9 DSP tunnel unavailable; using MB112 fallback: %s", err
+            )
+            await self.async_transact(
+                MB_DSP,
+                payload,
+                cmd_type=0x02,
+                remote_id=0xAAAA,
+            )
+        finally:
+            if tunnel_writer is not None:
+                tunnel_writer.close()
+                try:
+                    await tunnel_writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
         self._record_local_dsp_command(sub_mb, value, field)
+
+    async def _async_open_ls9_dsp_tunnel(
+        self,
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """Open the MB111 listener used by LS9 network-to-MCU commands."""
+        try:
+            return await asyncio.wait_for(
+                asyncio.open_connection(self.host, DSP_TUNNEL_PORT),
+                timeout=0.75,
+            )
+        except (OSError, asyncio.TimeoutError):
+            await self.async_transact(
+                MB_TUNNEL_START,
+                str(DSP_TUNNEL_PORT),
+                cmd_type=0x02,
+                remote_id=0xAAAA,
+            )
+            await asyncio.sleep(0.2)
+            return await asyncio.wait_for(
+                asyncio.open_connection(self.host, DSP_TUNNEL_PORT),
+                timeout=2.0,
+            )
 
     async def async_subwoofer_refresh(self) -> None:
         """Request every live Micro Subwoofer setting from its MCU."""
         if self.product != PRODUCT_MICRO:
             return
-        await self.async_transact(
-            MB_DSP,
-            bytes.fromhex("00 03 00 00 00"),
-            cmd_type=0x02,
-            remote_id=0xAAAA,
-        )
+        request = bytes.fromhex("00 03 00 00 00")
+        tunnel_writer: asyncio.StreamWriter | None = None
+        try:
+            async with self._dsp_refresh_lock:
+                tunnel_reader, tunnel_writer = (
+                    await self._async_open_ls9_dsp_tunnel()
+                )
+                tunnel_writer.write(request)
+                await tunnel_writer.drain()
+
+                chunks: list[bytes] = []
+                deadline = asyncio.get_running_loop().time() + 1.5
+                while asyncio.get_running_loop().time() < deadline:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            tunnel_reader.read(4096),
+                            timeout=0.75 if not chunks else 0.25,
+                        )
+                    except asyncio.TimeoutError:
+                        break
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                if chunks:
+                    self._handle_push(
+                        MB_DSP, b"".join(chunks), remote_id=0xAAAA
+                    )
+        except Exception as err:
+            _LOGGER.debug(
+                "Micro DSP tunnel refresh unavailable; using MB112 fallback: %s",
+                err,
+            )
+            await self.async_transact(
+                MB_DSP,
+                request,
+                cmd_type=0x02,
+                remote_id=0xAAAA,
+            )
+        finally:
+            if tunnel_writer is not None:
+                tunnel_writer.close()
+                try:
+                    await tunnel_writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
 
     async def async_save_subwoofer_custom(
         self,

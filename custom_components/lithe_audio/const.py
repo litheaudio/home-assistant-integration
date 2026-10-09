@@ -334,6 +334,7 @@ PRODUCT_CAPS = {
         "spdif_in_switch":  True,
         "favourites":       True,
         "subwoofer_controls": False,
+        "scheduling":       True,
     },
     PRODUCT_V3: {
         "chimes":           14,
@@ -351,6 +352,7 @@ PRODUCT_CAPS = {
         "spdif_in_switch":  False,
         "favourites":       True,
         "subwoofer_controls": False,
+        "scheduling":       True,
     },
     PRODUCT_IO1: {
         "chimes":           10,
@@ -368,6 +370,7 @@ PRODUCT_CAPS = {
         "spdif_in_switch":  False,
         "favourites":       True,
         "subwoofer_controls": False,
+        "scheduling":       True,
     },
     PRODUCT_V2: {
         "chimes":           0,
@@ -385,6 +388,7 @@ PRODUCT_CAPS = {
         "spdif_in_switch":  False,
         "favourites":       True,
         "subwoofer_controls": False,
+        "scheduling":       True,
     },
     PRODUCT_PRO: {
         "chimes":           6,
@@ -402,6 +406,7 @@ PRODUCT_CAPS = {
         "spdif_in_switch":  False,
         "favourites":       True,
         "subwoofer_controls": False,
+        "scheduling":       True,
     },
     PRODUCT_MICRO: {
         "chimes":           0,
@@ -414,11 +419,12 @@ PRODUCT_CAPS = {
         "loudness_number":  False,
         "loudness_switch":  False,
         "nightmode_switch": False,
-        "bluetooth_switch": True,    # BT on; no DSP for now
+        "bluetooth_switch": True,
         "aux_in_switch":    False,
         "spdif_in_switch":  False,
         "favourites":       False,
         "subwoofer_controls": True,
+        "scheduling":       False,
     },
 }
 
@@ -439,6 +445,7 @@ def caps(product: str) -> dict:
         "bluetooth_switch": False,
         "favourites":       False,
         "subwoofer_controls": False,
+        "scheduling":       False,
     })
 
 # ── LSSDP discovery ─────────────────────────────────────────────────────────

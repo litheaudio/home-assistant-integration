@@ -28,7 +28,7 @@ from .const import (
     DATA_COORDINATOR, DEFAULT_PORT, DOMAIN, LS10_PRODUCTS, LS9_PRODUCTS,
     MAX_CHIME_SLOT,
     PRODUCT_NAMES,
-    PRODUCT_PRO2, PRODUCT_V2, product_from_model,
+    PRODUCT_PRO2, PRODUCT_V2, caps, product_from_model,
     all_preset_options,
 )
 from .discovery import DiscoveredDevice, async_discover
@@ -351,14 +351,20 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        product_caps = caps(self._entry.data[CONF_PRODUCT])
+        menu_options = {
+            "groups":  "🔊  Multi-room Groups",
+            "logging": "🐞  Debug logging",
+        }
+        if product_caps.get("scheduling", True):
+            menu_options = {
+                "prayer": "🕋  Prayer Schedule",
+                "alarms": "⏰  Alarms",
+                **menu_options,
+            }
         return self.async_show_menu(
             step_id="init",
-            menu_options={
-                "prayer":           "🕋  Prayer Schedule",
-                "alarms":           "⏰  Alarms",
-                "groups":           "🔊  Multi-room Groups",
-                "logging":          "🐞  Debug logging",
-            },
+            menu_options=menu_options,
         )
 
     # ── Groups — list existing groups + "Add new" ──────────────────────
@@ -707,6 +713,10 @@ class LitheAudioOptionsFlow(config_entries.OptionsFlow):
                 continue
             coord = entry_data.get("coordinator") or entry_data.get(DATA_COORDINATOR)
             if coord:
+                if not caps(getattr(coord.client, "product", "")).get(
+                    "scheduling", True
+                ):
+                    continue
                 host = coord.client.host
                 name = coord.client.state.name or host
                 speaker_options.append({

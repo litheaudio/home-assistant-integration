@@ -328,10 +328,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         obsolete_unique_ids.extend([
             ("button", f"{host}_{entry.entry_id}_heart_save"),
             ("select", f"{host}_{entry.entry_id}_fav_save_slot"),
+            ("text", f"{host}_{entry.entry_id}_fav_save_name"),
             *(
                 ("button", f"{host}_{entry.entry_id}_play_fav_{slot}")
                 for slot in range(1, 11)
-              ),
+            ),
+            *(
+                ("text", f"{host}_{entry.entry_id}_fav_name_{slot}")
+                for slot in range(1, 11)
+            ),
           ])
     if not product_caps["subwoofer_controls"]:
         obsolete_unique_ids.extend([
@@ -360,14 +365,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _register_services(hass)
-    await async_register_prayer_service(hass)
     await async_register_cast_group_service(hass)
 
-    # Alarm manager — single instance shared across config entries.
-    if "alarms" not in hass.data.get(DOMAIN, {}):
-        await async_setup_alarm_manager(hass)
-    if not hass.services.has_service(DOMAIN, "alarm_create"):
-        _register_alarm_services(hass)
+    if product_caps.get("scheduling", True):
+        await async_register_prayer_service(hass)
+        # Alarm manager — single instance shared across eligible entries.
+        if "alarms" not in hass.data.get(DOMAIN, {}):
+            await async_setup_alarm_manager(hass)
+        if not hass.services.has_service(DOMAIN, "alarm_create"):
+            _register_alarm_services(hass)
 
     # Announce / broadcast / doorbell services (high-level wrappers)
     if not hass.data.get(DOMAIN, {}).get("_announce_registered"):
@@ -413,6 +419,9 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def _apply_prayer_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """If user has configured Prayer in Options Flow, start the scheduler."""
+    if not caps(entry.data[CONF_PRODUCT]).get("scheduling", True):
+        await async_remove_prayer_schedule(hass, entry.entry_id)
+        return
     opts = entry.options or {}
     prayer_cfg = opts.get("prayer") or {}
     if not prayer_cfg.get("enabled"):
