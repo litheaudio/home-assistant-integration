@@ -414,6 +414,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload integration so Prayer Scheduler picks up new schedule."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    if entry_data.pop("_skip_next_options_reload", False):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 

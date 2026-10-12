@@ -4,7 +4,6 @@ from __future__ import annotations
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -12,6 +11,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_PRODUCT,
+    CONF_CAST_GROUP_ENTITY,
+    CONF_CAST_GROUP_NAME,
     DATA_COORDINATOR,
     DOMAIN,
     DSP_EQ,
@@ -65,24 +66,9 @@ async def async_setup_entry(
             LitheSubwooferPhaseSelect(coordinator, entry),
         ))
 
-    # Only expose Cast routing when HA has a real Google Cast group to pick.
-    # A selector containing only "None — local only" has no useful action.
-    from .group import discover_cast_groups
-    cast_groups = discover_cast_groups(hass)
-    cast_group_unique_id = (
-        f"{entry.data['host']}_{entry.entry_id}_cast_group"
-    )
-    if cast_groups:
-        entities.append(LitheCastGroupSelect(coordinator, entry))
-    else:
-        # Remove the stale registry entry left by earlier releases so it does
-        # not linger as an unavailable/confusing control on the device page.
-        registry = er.async_get(hass)
-        entity_id = registry.async_get_entity_id(
-            "select", DOMAIN, cast_group_unique_id
-        )
-        if entity_id:
-            registry.async_remove(entity_id)
+    # Always add the selector. Cast commonly finishes discovery after this
+    # platform is set up; options are resolved live and appear automatically.
+    entities.append(LitheCastGroupSelect(coordinator, entry))
     if c["favourites"]:
         entities.append(LitheFavouriteSaveSlotSelect(coordinator, entry))
 
@@ -495,6 +481,12 @@ class LitheCastGroupSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntit
         self._entry = entry
         self._client = coordinator.client
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_cast_group"
+        self._client.state.active_cast_group = str(
+            entry.options.get(CONF_CAST_GROUP_NAME, "") or ""
+        )
+        self._client.state.active_cast_group_entity = str(
+            entry.options.get(CONF_CAST_GROUP_ENTITY, "") or ""
+        )
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -516,6 +508,9 @@ class LitheCastGroupSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntit
         """Live list of Cast groups + a 'None' option to clear routing."""
         groups = self._discover()
         labels = [g["name"] for g in groups]
+        current = getattr(self._client.state, "active_cast_group", "")
+        if current and current not in labels:
+            labels.append(current)
         return [self.NONE_LABEL] + sorted(labels)
 
     @property
@@ -527,12 +522,18 @@ class LitheCastGroupSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntit
     async def async_select_option(self, option: str) -> None:
         """Set or clear the Cast group routing for this speaker."""
         if option == self.NONE_LABEL:
-            # Clear routing
-            try:
-                self._client.state.active_cast_group = ""
-                self._client.state.active_cast_group_entity = ""
-            except Exception:
-                pass
+            self._client.state.active_cast_group = ""
+            self._client.state.active_cast_group_entity = ""
+            options = dict(self._entry.options)
+            options.pop(CONF_CAST_GROUP_NAME, None)
+            options.pop(CONF_CAST_GROUP_ENTITY, None)
+            self.hass.data[DOMAIN][self._entry.entry_id][
+                "_skip_next_options_reload"
+            ] = True
+            self.hass.config_entries.async_update_entry(
+                self._entry, options=options
+            )
+            self.coordinator.async_set_updated_data(self._client.state)
             self.async_write_ha_state()
             return
 
@@ -544,11 +545,18 @@ class LitheCastGroupSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntit
                 break
         if not target_entity:
             return
-        try:
-            self._client.state.active_cast_group = option
-            self._client.state.active_cast_group_entity = target_entity
-        except Exception:
-            pass
+        self._client.state.active_cast_group = option
+        self._client.state.active_cast_group_entity = target_entity
+        options = {
+            **self._entry.options,
+            CONF_CAST_GROUP_NAME: option,
+            CONF_CAST_GROUP_ENTITY: target_entity,
+        }
+        self.hass.data[DOMAIN][self._entry.entry_id][
+            "_skip_next_options_reload"
+        ] = True
+        self.hass.config_entries.async_update_entry(self._entry, options=options)
+        self.coordinator.async_set_updated_data(self._client.state)
         self.async_write_ha_state()
 
     @callback

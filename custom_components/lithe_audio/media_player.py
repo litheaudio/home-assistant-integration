@@ -23,14 +23,17 @@ from homeassistant.components.media_player.browse_media import (
     async_process_play_media_url,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    BT_OFF, BT_ON, CONF_PRODUCT, DATA_COORDINATOR, DOMAIN, MB_SOURCE,
+    BT_OFF, BT_ON, CONF_CAST_GROUP_ENTITY, CONF_CAST_GROUP_NAME, CONF_PRODUCT,
+    DATA_COORDINATOR, DOMAIN, LS9_PRODUCTS, MB_SOURCE,
     PRODUCT_MICRO, PRODUCT_NAMES, PRODUCT_SOURCES, PRODUCT_V2, SOURCES,
     SUB_DSP_PROFILE, SUB_DSP_SET_FIELD, SUB_PROFILE_OPTIONS, caps,
 )
@@ -113,6 +116,12 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         self._entry = entry
         self._product = entry.data[CONF_PRODUCT]
         self._client = coordinator.client
+        self._client.state.active_cast_group = str(
+            entry.options.get(CONF_CAST_GROUP_NAME, "") or ""
+        )
+        self._client.state.active_cast_group_entity = str(
+            entry.options.get(CONF_CAST_GROUP_ENTITY, "") or ""
+        )
         self._supports_favourites = bool(
             caps(self._product).get("favourites", True)
         )
@@ -179,6 +188,17 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         if manager:
             self.async_on_remove(manager.async_listen(self.async_write_ha_state))
 
+        @callback
+        def _handle_cast_group_state(event) -> None:
+            if event.data.get("entity_id") == self._active_cast_group_entity():
+                self.async_write_ha_state()
+
+        self.async_on_remove(
+            self.hass.bus.async_listen(
+                EVENT_STATE_CHANGED, _handle_cast_group_state
+            )
+        )
+
     # ── Feature flags ──────────────────────────────────────────────────────
 
     @property
@@ -212,6 +232,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
     @property
     def state(self) -> MediaPlayerState:
+        cast_state = self.hass.states.get(self._active_cast_group_entity())
+        if cast_state is not None:
+            return {
+                "playing": MediaPlayerState.PLAYING,
+                "paused": MediaPlayerState.PAUSED,
+                "buffering": MediaPlayerState.BUFFERING,
+                "idle": MediaPlayerState.IDLE,
+                "off": MediaPlayerState.OFF,
+            }.get(cast_state.state, MediaPlayerState.IDLE)
         if not self._client.state.connected:
             return MediaPlayerState.OFF
         return {
@@ -251,10 +280,20 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
     @property
     def volume_level(self) -> float:
+        cast_state = self.hass.states.get(self._active_cast_group_entity())
+        if cast_state is not None:
+            value = cast_state.attributes.get("volume_level")
+            if value is not None:
+                return float(value)
         return self._client.state.volume / 100.0
 
     @property
     def is_volume_muted(self) -> bool | None:
+        cast_state = self.hass.states.get(self._active_cast_group_entity())
+        if cast_state is not None:
+            value = cast_state.attributes.get("is_volume_muted")
+            if value is not None:
+                return bool(value)
         state = self._client.state
         return state.muted if state.mute_state_known else None
 
@@ -329,8 +368,56 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         except Exception:
             return []
 
+    def _active_cast_group_entity(self) -> str:
+        """Return the selected, pre-created Google Cast group entity."""
+        return str(
+            getattr(self._client.state, "active_cast_group_entity", "") or ""
+        )
+
+    async def _async_cast_group_call(
+        self,
+        service: str,
+        data: dict[str, Any] | None = None,
+        *,
+        blocking: bool = True,
+    ) -> bool:
+        """Send a command to the selected Cast group, if one is selected.
+
+        A selected group is authoritative. Failure raises instead of falling
+        back to the physical speaker, because local fallback would start an
+        unsynchronised second stream outside the pre-created Cast group.
+        """
+        target = self._active_cast_group_entity()
+        if not target:
+            return False
+
+        state = self.hass.states.get(target)
+        if state is None or state.state == "unavailable":
+            raise HomeAssistantError(
+                f"Selected Cast group {target} is unavailable. "
+                "Check the Google Cast integration or select another group."
+            )
+
+        service_data: dict[str, Any] = {"entity_id": target}
+        if data:
+            service_data.update(data)
+        _LOGGER.info("Routing %s to selected Cast group %s", service, target)
+        await self.hass.services.async_call(
+            MEDIA_PLAYER_DOMAIN,
+            service,
+            service_data,
+            blocking=blocking,
+            context=self._context,
+        )
+        return True
+
     @property
     def media_title(self) -> str | None:
+        cast_state = self.hass.states.get(self._active_cast_group_entity())
+        if cast_state is not None:
+            title = cast_state.attributes.get("media_title")
+            if title:
+                return str(title)
         # Prefer real title from MB#42, fall back to filename of the URL
         # we last asked the speaker to play (helps when speaker hasn't
         # pushed metadata yet for Direct URL streams).
@@ -353,10 +440,20 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
     @property
     def media_artist(self) -> str | None:
+        cast_state = self.hass.states.get(self._active_cast_group_entity())
+        if cast_state is not None:
+            artist = cast_state.attributes.get("media_artist")
+            if artist:
+                return str(artist)
         return self._client.state.artist or None
 
     @property
     def media_album_name(self) -> str | None:
+        cast_state = self.hass.states.get(self._active_cast_group_entity())
+        if cast_state is not None:
+            album = cast_state.attributes.get("media_album_name")
+            if album:
+                return str(album)
         return self._client.state.album or None
 
     @property
@@ -493,6 +590,12 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             "shuffle":         s.shuffle,
             "repeat":          s.repeat,
             "supports_favourites": self._supports_favourites,
+            "active_cast_group": getattr(
+                s, "active_cast_group", ""
+            ) or None,
+            "active_cast_group_entity": getattr(
+                s, "active_cast_group_entity", ""
+            ) or None,
             # Favourites — list of {slot, name} for picker UIs
             "favourites":      merged_favs if self._supports_favourites else [],
             # Bluetooth
@@ -502,12 +605,22 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
     # ── Commands ───────────────────────────────────────────────────────────
 
     async def async_set_volume_level(self, volume: float) -> None:
+        if await self._async_cast_group_call(
+            "volume_set", {"volume_level": volume}
+        ):
+            return
         await self._client.async_set_volume(int(volume * 100))
 
     async def async_mute_volume(self, mute: bool) -> None:
+        if await self._async_cast_group_call(
+            "volume_mute", {"is_volume_muted": mute}
+        ):
+            return
         await self._client.async_mute(mute)
 
     async def async_media_play(self) -> None:
+        if await self._async_cast_group_call("media_play"):
+            return
         # Use RESUME if previously paused, else PLAY
         if self._client.state.play_state == "paused":
             await self._client.async_resume()
@@ -515,26 +628,46 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             await self._client.async_play()
 
     async def async_media_pause(self) -> None:
+        if await self._async_cast_group_call("media_pause"):
+            return
         await self._client.async_pause()
 
     async def async_media_stop(self) -> None:
+        if await self._async_cast_group_call("media_stop"):
+            return
         await self._client.async_stop()
 
     async def async_media_next_track(self) -> None:
+        if await self._async_cast_group_call("media_next_track"):
+            return
         await self._client.async_next_track()
 
     async def async_media_previous_track(self) -> None:
+        if await self._async_cast_group_call("media_previous_track"):
+            return
         await self._client.async_prev_track()
 
     async def async_media_seek(self, position: float) -> None:
+        if await self._async_cast_group_call(
+            "media_seek", {"seek_position": position}
+        ):
+            return
         await self._client.async_seek(int(position * 1000))
 
     async def async_set_shuffle(self, shuffle: bool) -> None:
         """Toggle shuffle mode."""
+        if await self._async_cast_group_call(
+            "shuffle_set", {"shuffle": shuffle}
+        ):
+            return
         await self._client.async_set_shuffle(shuffle)
 
     async def async_set_repeat(self, repeat: RepeatMode) -> None:
         """Set repeat mode (off / all / one)."""
+        if await self._async_cast_group_call(
+            "repeat_set", {"repeat": repeat}
+        ):
+            return
         await self._client.async_set_repeat(repeat)
 
     # ── Multi-room via Cast groups (4th icon: GROUPING) ───────────────
@@ -636,11 +769,19 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             )
             return
 
-        try:
-            self._client.state.active_cast_group = chosen_name
-            self._client.state.active_cast_group_entity = chosen_entity
-        except Exception:
-            pass
+        self._client.state.active_cast_group = chosen_name
+        self._client.state.active_cast_group_entity = chosen_entity
+        self.hass.data[DOMAIN][self._entry.entry_id][
+            "_skip_next_options_reload"
+        ] = True
+        self.hass.config_entries.async_update_entry(
+            self._entry,
+            options={
+                **self._entry.options,
+                CONF_CAST_GROUP_NAME: chosen_name,
+                CONF_CAST_GROUP_ENTITY: chosen_entity,
+            },
+        )
         _LOGGER.info(
             "join_players: routing through Cast group %r (entity=%s) "
             "[picked from %d candidates]",
@@ -650,11 +791,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
     async def async_unjoin_player(self) -> None:
         """Stop routing through Cast group — return to local playback."""
-        try:
-            self._client.state.active_cast_group = ""
-            self._client.state.active_cast_group_entity = ""
-        except Exception:
-            pass
+        self._client.state.active_cast_group = ""
+        self._client.state.active_cast_group_entity = ""
+        options = dict(self._entry.options)
+        options.pop(CONF_CAST_GROUP_NAME, None)
+        options.pop(CONF_CAST_GROUP_ENTITY, None)
+        self.hass.data[DOMAIN][self._entry.entry_id][
+            "_skip_next_options_reload"
+        ] = True
+        self.hass.config_entries.async_update_entry(self._entry, options=options)
         _LOGGER.info("unjoin_player: cleared Cast group routing")
         self.async_write_ha_state()
 
@@ -722,18 +867,30 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             return
 
         if source == "No Source":
+            if await self._async_cast_group_call("media_stop"):
+                return
             await self._client._send(0x02, MB_SOURCE, "0")  # noqa: SLF001
             await asyncio.sleep(0.3)
             await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
             return
 
         if source == "Bluetooth" and "Bluetooth" in self._source_list:
+            if self._active_cast_group_entity():
+                raise HomeAssistantError(
+                    "Bluetooth is a local speaker input and cannot be sent "
+                    "to a Google Cast group. Clear Cast Group first."
+                )
             await self._client.async_bluetooth(BT_ON)
             await asyncio.sleep(0.5)
             await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
             return
 
         if source == "Aux" and "Aux" in self._source_list:
+            if self._active_cast_group_entity():
+                raise HomeAssistantError(
+                    "AUX is a local speaker input and cannot be sent to a "
+                    "Google Cast group. Clear Cast Group first."
+                )
             await self._client._send(0x02, MB_SOURCE, "13")  # noqa: SLF001
             await asyncio.sleep(0.3)
             await self._client._send(0x01, MB_SOURCE, "")  # noqa: SLF001
@@ -747,13 +904,14 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 )
                 return
             spotify_entity_id = spotify_entities[0]
-            target = self._spotify_target(spotify_entity_id)
+            target = await self._async_spotify_target(spotify_entity_id)
             if target is None:
                 _LOGGER.warning(
                     "select_source: no Spotify Connect target matches %s",
                     self.name,
                 )
                 return
+            await self._async_prepare_spotify_transfer()
             await self.hass.services.async_call(
                 MEDIA_PLAYER_DOMAIN,
                 "select_source",
@@ -761,6 +919,14 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 blocking=True,
                 context=self._context,
             )
+            if self._product in LS9_PRODUCTS:
+                await self.hass.services.async_call(
+                    MEDIA_PLAYER_DOMAIN,
+                    "media_play",
+                    {"entity_id": spotify_entity_id},
+                    blocking=True,
+                    context=self._context,
+                )
             return
 
         if source == "♥ Save Current Track":
@@ -803,6 +969,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                             "select_source: playing favourite %d (%s)",
                             slot, fav.get("name") or fav["url"],
                         )
+                        if await self._async_cast_group_call(
+                            "play_media",
+                            {
+                                "media_content_type": MediaType.MUSIC,
+                                "media_content_id": fav["url"],
+                            },
+                            blocking=False,
+                        ):
+                            return
                         await self._client.async_play_url(fav["url"])
                         return
             except Exception as e:
@@ -864,6 +1039,12 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # MA player entity and playback must be delegated too so MA can resolve
         # library/provider URIs and stream them to this physical speaker.
         if media_id.startswith(MUSIC_ASSISTANT_CONTENT_PREFIX):
+            if self._active_cast_group_entity():
+                raise HomeAssistantError(
+                    "Music Assistant library playback cannot be delegated "
+                    "to an individual speaker while Cast Group is selected. "
+                    "Target the Cast group from Music Assistant instead."
+                )
             try:
                 ma_entity_id, ma_content_id = decode_music_assistant_content(
                     media_id
@@ -916,6 +1097,25 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             if not self._supports_favourites:
                 return
             slot = int(media_id[len(_FAV_PREFIX):])
+            if self._active_cast_group_entity():
+                from .local_favs import get_local_favs
+                manager = get_local_favs(self.hass)
+                favourite = manager.get(slot) if manager else None
+                if not favourite or not favourite.get("url"):
+                    raise HomeAssistantError(
+                        f"Favourite {slot} has no URL that can be sent to "
+                        "the selected Cast group. Save it from a URL-based "
+                        "source first."
+                    )
+                await self._async_cast_group_call(
+                    "play_media",
+                    {
+                        "media_content_type": MediaType.MUSIC,
+                        "media_content_id": favourite["url"],
+                    },
+                    blocking=False,
+                )
+                return
             await self._client.async_play_favourite(slot)
             return
 
@@ -956,6 +1156,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 if mgr:
                     fav = mgr.get(slot)
                     if fav and fav.get("url"):
+                        if await self._async_cast_group_call(
+                            "play_media",
+                            {
+                                "media_content_type": MediaType.MUSIC,
+                                "media_content_id": fav["url"],
+                            },
+                            blocking=False,
+                        ):
+                            return
                         await self._client.async_play_url(fav["url"])
                         return
                 _LOGGER.warning("local fav slot %d is empty", slot)
@@ -1028,6 +1237,18 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         extra: dict = kwargs.get("extra") or {}
 
         if announce and media_id.startswith(("http://", "https://")):
+            if self._active_cast_group_entity():
+                await self._async_cast_group_call(
+                    "play_media",
+                    {
+                        "media_content_type": media_type or MediaType.MUSIC,
+                        "media_content_id": media_id,
+                        "announce": True,
+                        **({"extra": extra} if extra else {}),
+                    },
+                    blocking=False,
+                )
+                return
             # Route through tannoy notify service which handles
             # save/pause/volume/play. Use extra.volume if provided.
             #
@@ -1097,28 +1318,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         # of playing locally. The Cast group will synchronously stream
         # to all its members (Google handles the timing infrastructure).
         if media_type in _PLAYABLE_TYPES or media_id.startswith(("http://", "https://")):
-            cast_group_entity = getattr(self._client.state, "active_cast_group_entity", "")
-            if cast_group_entity:
-                _LOGGER.info(
-                    "play_media: routing through Cast group %s (url=%s)",
-                    cast_group_entity, media_id,
-                )
-                try:
-                    await self.hass.services.async_call(
-                        "media_player", "play_media",
-                        {
-                            "entity_id":          cast_group_entity,
-                            "media_content_type": media_type or "music",
-                            "media_content_id":   media_id,
-                        },
-                        blocking=False,
-                    )
-                except Exception as e:
-                    _LOGGER.error(
-                        "Cast group routing failed: %s — falling back to local",
-                        e,
-                    )
-                    await self._client.async_play_url(media_id)
+            cast_data: dict[str, Any] = {
+                "media_content_type": media_type or MediaType.MUSIC,
+                "media_content_id": media_id,
+            }
+            if kwargs.get("enqueue") is not None:
+                cast_data["enqueue"] = kwargs["enqueue"]
+            if await self._async_cast_group_call(
+                "play_media", cast_data, blocking=False
+            ):
                 return
 
             # No Cast group active — play locally only
@@ -1767,11 +1975,54 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         state = self.hass.states.get(spotify_entity_id)
         sources = state.attributes.get("source_list", []) if state else []
         entry_title = self._entry.title.rsplit(" (", 1)[0]
-        candidates = [
-            self._client.state.name or "",
-            entry_title,
-        ]
+        active_group = (
+            getattr(self._client.state, "active_cast_group", "") or ""
+        )
+        candidates = (
+            [active_group]
+            if active_group
+            else [self._client.state.name or "", entry_title]
+        )
         return choose_spotify_source(sources, candidates)
+
+    async def _async_spotify_target(
+        self, spotify_entity_id: str
+    ) -> str | None:
+        """Refresh Spotify Connect devices before matching the destination."""
+        try:
+            await self.hass.services.async_call(
+                "homeassistant",
+                "update_entity",
+                {"entity_id": spotify_entity_id},
+                blocking=True,
+                context=self._context,
+            )
+        except Exception as err:
+            _LOGGER.debug("Spotify source refresh failed: %s", err)
+        target = self._spotify_target(spotify_entity_id)
+        state = self.hass.states.get(spotify_entity_id)
+        sources = state.attributes.get("source_list", []) if state else []
+        _LOGGER.info(
+            "Spotify target match for %s (%s): target=%r available=%s",
+            self.name,
+            self._product,
+            target,
+            sources,
+        )
+        return target
+
+    async def _async_prepare_spotify_transfer(self) -> None:
+        """Open the LS9 MB10/MB11 authorization window when required."""
+        if self._active_cast_group_entity() or self._product not in LS9_PRODUCTS:
+            return
+        opener = getattr(
+            self._client, "async_open_source_authorization_window", None
+        )
+        if opener is None:
+            raise HomeAssistantError(
+                "This LS9 client cannot authorize a Spotify source change"
+            )
+        await opener()
 
     async def _async_play_spotify(
         self,
@@ -1782,7 +2033,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
     ) -> None:
         """Transfer Spotify to this speaker and play a library item."""
         spotify_content_id = spotify_playback_content_id(spotify_content_id)
-        target = self._spotify_target(spotify_entity_id)
+        target = await self._async_spotify_target(spotify_entity_id)
         if target is None:
             state = self.hass.states.get(spotify_entity_id)
             available = state.attributes.get("source_list", []) if state else []
@@ -1806,6 +2057,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             return
 
         try:
+            await self._async_prepare_spotify_transfer()
             await self.hass.services.async_call(
                 MEDIA_PLAYER_DOMAIN,
                 "select_source",

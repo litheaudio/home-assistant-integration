@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.4.76
+
+- Fix Spotify Connect source changes on LS9 products by keeping a registered
+  LUCI socket open during transfer and answering MB10 with MB11 on that same
+  socket. LS9 accepts only one TCP client, so the previous second-connection
+  grant could be discarded.
+- Serialize LS9 LUCI transactions to prevent Spotify authorization, state
+  refreshes and DSP writes from competing for the speaker's single socket.
+- Refresh Home Assistant's Spotify entity before matching a Connect target and
+  log the available target names for straightforward diagnostics.
+- Resume Spotify after selecting it from an LS9 speaker's source menu. LS10
+  behavior is unchanged.
+- Expose Spotify on the LS9 Micro Subwoofer source matrix instead of hiding it
+  while the other LS9 products offered the same Connect workflow.
+
+## 1.4.75
+
+- Make the Cast Group selector available even when Google Cast discovery
+  finishes after the Lithe entity platforms load.
+- Persist each speaker's selected, pre-created Google Cast group and restore it
+  after Home Assistant or the integration restarts.
+- Route play, pause, stop, seek, next/previous, mute and volume through the
+  selected Cast group instead of issuing separate commands to member speakers.
+- Route URL-based favourites, Browse Media, TTS and announcements to the group,
+  and never silently fall back to unsynchronised local playback when the group
+  is unavailable.
+- Reflect the selected Cast group's playback, volume, mute and metadata state on
+  the Lithe media-player card while keeping EQ controls local to the speaker.
+
 ## 1.4.74
 
 - Apply the MB111 raw MCU tunnel transport to `WiFiMicroSubwoofer` as well as

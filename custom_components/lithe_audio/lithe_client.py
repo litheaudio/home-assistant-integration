@@ -2321,6 +2321,12 @@ class LitheClientLS9(LitheClient):
     LS9 firmware only allows one TCP connection at a time.
     """
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._ls9_transaction_lock = asyncio.Lock()
+        self._source_auth_task: asyncio.Task | None = None
+        self._source_auth_error: Exception | None = None
+
     @staticmethod
     def _build_binary_packet(
         cmd_type: int,
@@ -2342,6 +2348,19 @@ class LitheClientLS9(LitheClient):
         remote_id: int = 0xAAAA,
     ) -> list[tuple[int, str]]:
         """Connect, send one command, collect responses, disconnect."""
+        async with self._ls9_transaction_lock:
+            return await self._async_transact_unlocked(
+                mbid, payload, cmd_type, remote_id
+            )
+
+    async def _async_transact_unlocked(
+        self,
+        mbid: int,
+        payload: str | bytes,
+        cmd_type: int = 0x02,
+        remote_id: int = 0xAAAA,
+    ) -> list[tuple[int, str]]:
+        """Run one LS9 transaction while the connection lock is held."""
         responses: list[tuple[int, str]] = []
         try:
             reader, writer = await asyncio.wait_for(
@@ -2397,10 +2416,23 @@ class LitheClientLS9(LitheClient):
                                 "utf-8", "replace"
                             ).rstrip("\x00")
                         buf = buf[total:]
-                        # ALWAYS dispatch — even MB#10 needs _handle_push so
-                        # it can send the MB#11=1 grant. Previously this was
-                        # suppressed which broke source switching on LS9.
-                        self._handle_push(r_mbid, r_payload)
+                        if r_mbid == MB_PLAYBACK_AUTH:
+                            # LS9 permits one TCP connection. Grant on this
+                            # exact socket; scheduling self._send() would open
+                            # a second connection and the firmware discards it.
+                            writer.write(
+                                self._build_packet(
+                                    0x02, MB_PLAYBACK_GRANT, "1", remote_id
+                                )
+                            )
+                            await writer.drain()
+                            _LOGGER.info(
+                                "LS9 MB#10 source %r granted on active "
+                                "socket with MB#11=1",
+                                str(r_payload).strip(),
+                            )
+                        else:
+                            self._handle_push(r_mbid, r_payload)
                         # Caller wants non-grant responses (so it can see
                         # the actual reply, not the auth handshake)
                         if r_mbid != MB_PLAYBACK_AUTH:
@@ -2416,6 +2448,120 @@ class LitheClientLS9(LitheClient):
         except Exception as e:
             _LOGGER.debug("LS9 transact %s MB#%d: %s", self.host, mbid, e)
         return responses
+
+    async def async_open_source_authorization_window(
+        self, duration: float = 8.0
+    ) -> None:
+        """Listen briefly for an externally initiated Spotify source change.
+
+        Spotify Connect is initiated through Spotify's API, not through a LUCI
+        command. LS9 therefore needs a live registered HOST socket while the
+        transfer happens so MB#10 can be answered immediately with MB#11=1.
+        """
+        if self._source_auth_task and not self._source_auth_task.done():
+            self._source_auth_task.cancel()
+            try:
+                await self._source_auth_task
+            except (asyncio.CancelledError, ConnectionError, OSError):
+                pass
+
+        ready = asyncio.Event()
+        self._source_auth_error = None
+        self._source_auth_task = asyncio.create_task(
+            self._source_authorization_listener(duration, ready)
+        )
+        try:
+            await asyncio.wait_for(ready.wait(), timeout=3.0)
+        except asyncio.TimeoutError as err:
+            self._source_auth_task.cancel()
+            raise ConnectionError(
+                f"Could not open LS9 Spotify authorization window on "
+                f"{self.host}"
+            ) from err
+        if self._source_auth_error is not None:
+            raise ConnectionError(
+                f"Could not open LS9 Spotify authorization window on "
+                f"{self.host}: {self._source_auth_error}"
+            ) from self._source_auth_error
+
+    async def _source_authorization_listener(
+        self, duration: float, ready: asyncio.Event
+    ) -> None:
+        """Hold one LS9 socket and grant MB#10 on that same connection."""
+        writer: asyncio.StreamWriter | None = None
+        try:
+            async with self._ls9_transaction_lock:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.host, self.port), timeout=4.0
+                )
+                writer.write(
+                    self._build_packet(0x02, MB_REGISTER, self.local_ip)
+                )
+                await writer.drain()
+                await asyncio.sleep(0.15)
+                ready.set()
+
+                buf = b""
+                deadline = asyncio.get_running_loop().time() + duration
+                while asyncio.get_running_loop().time() < deadline:
+                    timeout = min(
+                        0.5,
+                        max(0.05, deadline - asyncio.get_running_loop().time()),
+                    )
+                    try:
+                        chunk = await asyncio.wait_for(
+                            reader.read(4096), timeout=timeout
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while len(buf) >= 10:
+                        data_len = struct.unpack_from(">H", buf, 8)[0]
+                        total = 10 + data_len
+                        if len(buf) < total:
+                            break
+                        r_mbid = struct.unpack_from(">H", buf, 3)[0]
+                        raw = buf[10:10 + data_len]
+                        buf = buf[total:]
+                        r_payload = raw.decode(
+                            "utf-8", "replace"
+                        ).rstrip("\x00")
+                        if r_mbid == MB_PLAYBACK_AUTH:
+                            writer.write(
+                                self._build_packet(
+                                    0x02, MB_PLAYBACK_GRANT, "1", 0xAAAA
+                                )
+                            )
+                            await writer.drain()
+                            _LOGGER.info(
+                                "LS9 Spotify source %r authorized with "
+                                "MB#11=1 on the listening socket",
+                                r_payload.strip(),
+                            )
+                        else:
+                            self._handle_push(r_mbid, r_payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._source_auth_error = err
+            if not ready.is_set():
+                ready.set()
+            _LOGGER.warning(
+                "LS9 Spotify authorization listener failed on %s: %s",
+                self.host,
+                err,
+            )
+        finally:
+            if not ready.is_set():
+                ready.set()
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
 
     async def async_dsp_command(
         self,
@@ -2581,4 +2727,10 @@ class LitheClientLS9(LitheClient):
         await self.async_refresh()
 
     async def async_disconnect(self) -> None:
+        if self._source_auth_task and not self._source_auth_task.done():
+            self._source_auth_task.cancel()
+            try:
+                await self._source_auth_task
+            except (asyncio.CancelledError, ConnectionError, OSError):
+                pass
         self.state.connected = False

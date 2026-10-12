@@ -11,6 +11,8 @@ CONF_PRODUCT    = "product"
 CONF_USE_TLS    = "use_tls"
 CONF_CERT_PATH  = "cert_path"
 CONF_KEY_PATH   = "key_path"
+CONF_CAST_GROUP_NAME   = "cast_group_name"
+CONF_CAST_GROUP_ENTITY = "cast_group_entity"
 
 # Default values
 DEFAULT_PORT = 7777
@@ -115,7 +117,7 @@ PRODUCT_SOURCES = {
     PRODUCT_IO1:   [0, 1, 4, 9, 21, 22, 23, 24, 27, 28, 30],
     PRODUCT_V2:    [0, 1, 4, 19, 24, 30],
     PRODUCT_PRO:   [0, 1, 4, 24, 30],
-    PRODUCT_MICRO: [0, 1, 24],
+    PRODUCT_MICRO: [0, 1, 4, 24],
 }
 
 # ── Message Box IDs ─────────────────────────────────────────────────────────
