@@ -1983,27 +1983,22 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         return item
 
     def _spotify_target(self, spotify_entity_id: str) -> str | None:
-        """Match this Lithe speaker to the Spotify entity's source list."""
+        """Resolve the explicitly selected speaker or Cast-group target."""
         state = self.hass.states.get(spotify_entity_id)
         sources = state.attributes.get("source_list", []) if state else []
-        entry_title = self._entry.title.rsplit(" (", 1)[0]
         active_group = (
             getattr(self._client.state, "active_cast_group", "") or ""
         )
         configured_target = str(
             self._entry.options.get(CONF_SPOTIFY_TARGET, "") or ""
         )
-        if not active_group and configured_target:
-            # Spotify returns the original spelling/case in source_list. Use
-            # the stored mapping only while it is currently advertised, so a
-            # sleeping or renamed target produces an honest unavailable error.
-            return choose_spotify_source(sources, [configured_target])
-        candidates = (
-            [active_group]
-            if active_group
-            else [self._client.state.name or "", entry_title]
-        )
-        return choose_spotify_source(sources, candidates)
+        target = active_group or configured_target
+        if not target:
+            return None
+        # Spotify returns the original spelling/case in source_list. Resolve
+        # only the user's explicit mapping (or selected Cast group); never
+        # guess from the device/config-entry name.
+        return choose_spotify_source(sources, [target])
 
     async def _async_spotify_target(
         self, spotify_entity_id: str
@@ -2063,7 +2058,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             message = (
                 "Spotify could not find a Spotify Connect target matching "
                 f"this Lithe speaker. Configured target: "
-                f"{configured_target or 'automatic matching'}. Available "
+                f"{configured_target or 'not selected'}. Available "
                 f"targets: {available or 'none'}. Choose Audio - Spotify "
                 "Connect Target on the device page, then retry."
             )

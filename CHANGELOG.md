@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.82
+
+- Clear title, artist, album, artwork, duration and position immediately when
+  an LS9 speaker changes playback source, preventing Spotify metadata from
+  remaining visible after switching to radio.
+- Request both MB#42 now-playing state and the LS9 `GETUI:PLAY` view after a
+  source transition so radio station and track metadata populate promptly.
+
+## 1.4.81
+
+- Remove automatic Spotify Connect name matching. Each speaker now requires an
+  explicit `Audio - Spotify Connect Target` selection, preventing playback from
+  being routed to a similarly named device.
+- Request a live MCU state report after LS9 EQ writes so audible Treble, Mid,
+  Bass, Balance, Output and preset changes are replaced with speaker-confirmed
+  values in Home Assistant instead of remaining optimistic local state.
+
+## 1.4.80
+
+- Use Home Assistant's identifier-specific device-registry lookup when
+  migrating generic LS9 device names, avoiding the deprecation warning added
+  by Home Assistant 2026.10 while retaining compatibility with older cores.
+
 ## 1.4.79
 
 - Preserve a discovered LS9 speaker identity such as

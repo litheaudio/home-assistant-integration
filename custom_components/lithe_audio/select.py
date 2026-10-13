@@ -474,7 +474,7 @@ class LitheSpotifyTargetSelect(
     _attr_name = audio_control_name(10, "Spotify Connect Target")
     _attr_icon = "mdi:spotify"
 
-    AUTO_LABEL = "(Automatic name matching)"
+    UNSET_LABEL = "(Select a Spotify target)"
 
     def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
@@ -521,13 +521,13 @@ class LitheSpotifyTargetSelect(
         if current and current not in targets:
             targets.append(current)
             targets.sort(key=str.casefold)
-        return [self.AUTO_LABEL, *targets]
+        return [self.UNSET_LABEL, *targets]
 
     @property
     def current_option(self) -> str:
         return str(
             self._entry.options.get(CONF_SPOTIFY_TARGET, "")
-            or self.AUTO_LABEL
+            or self.UNSET_LABEL
         )
 
     async def async_added_to_hass(self) -> None:
@@ -550,7 +550,7 @@ class LitheSpotifyTargetSelect(
 
     async def async_select_option(self, option: str) -> None:
         options = dict(self._entry.options)
-        if option == self.AUTO_LABEL:
+        if option == self.UNSET_LABEL:
             options.pop(CONF_SPOTIFY_TARGET, None)
         elif option in self._spotify_sources():
             options[CONF_SPOTIFY_TARGET] = option

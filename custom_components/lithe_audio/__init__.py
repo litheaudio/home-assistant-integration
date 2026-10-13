@@ -231,8 +231,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry_name = entry.title.rsplit(" (", 1)[0].strip()
         if entry_name and entry_name not in set(PRODUCT_NAMES.values()):
             device_registry = dr.async_get(hass)
-            device = device_registry.async_get_device(
-                identifiers={(DOMAIN, host)}
+            get_by_identifier = getattr(
+                device_registry, "async_get_device_by_identifier", None
+            )
+            device = (
+                get_by_identifier((DOMAIN, host))
+                if get_by_identifier is not None
+                else device_registry.async_get_device(
+                    identifiers={(DOMAIN, host)}
+                )
             )
             if (
                 device is not None

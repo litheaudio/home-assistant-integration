@@ -615,7 +615,10 @@ class LitheClient:
         self._schedule_metadata_refresh(delays=(0.25, 1.0))
 
     def _schedule_metadata_refresh(
-        self, delays: tuple[float, ...] = (0.15, 0.75, 1.5)
+        self,
+        delays: tuple[float, ...] = (0.15, 0.75, 1.5),
+        *,
+        include_play_view: bool = False,
     ) -> None:
         """Fetch changing track metadata before the normal MB#42 cadence."""
         if self._metadata_refresh_task and not self._metadata_refresh_task.done():
@@ -628,12 +631,34 @@ class LitheClient:
                     await asyncio.sleep(max(0.0, target - elapsed))
                     elapsed = target
                     await self._send(0x01, MB_NOW_PLAYING, "")
+                    if include_play_view:
+                        # LS9 radio services commonly refresh their metadata
+                        # only through the Play View request. Its response is
+                        # delivered through the same MB#42 parser.
+                        await self._send(0x02, MB_BROWSE, "GETUI:PLAY")
             except asyncio.CancelledError:
                 pass
             except Exception as err:
                 _LOGGER.debug("Metadata refresh failed: %s", err)
 
         self._metadata_refresh_task = asyncio.create_task(_refresh())
+
+    def _clear_now_playing_for_source(self, source_id: int) -> None:
+        """Discard metadata owned by the previous playback source."""
+        self._cancel_artwork_refresh()
+        self.state.title = ""
+        self.state.artist = ""
+        self.state.album = ""
+        self.state.artwork_url = ""
+        self.state.artwork_revision += 1
+        self.state.duration_ms = 0
+        self.state.position_ms = 0
+        self.state.position_updated_at = 0.0
+        self.state.is_live = False
+        self.state.shuffle = False
+        self.state.repeat = "off"
+        if source_id != 17:
+            self.state.last_played_url = ""
 
     async def async_play_url(self, url: str) -> None:
         """Push a direct stream URL to the speaker (MB#41 DIRECT).
@@ -1615,9 +1640,23 @@ class LitheClient:
 
         elif mbid == MB_SOURCE:
             try:
-                self.state.source_id = int(payload)
+                source_id = int(payload)
             except ValueError:
                 pass
+            else:
+                if source_id != self.state.source_id:
+                    old_source = self.state.source_id
+                    self.state.source_id = source_id
+                    self._clear_now_playing_for_source(source_id)
+                    _LOGGER.info(
+                        "Playback source changed %s -> %s; refreshing metadata",
+                        old_source,
+                        source_id,
+                    )
+                    self._schedule_metadata_refresh(
+                        delays=(0.1, 0.6, 1.5, 3.0),
+                        include_play_view=True,
+                    )
 
         elif mbid == MB_PLAY_STATE:
             self.state.play_state = PLAY_STATES.get(payload.strip(), "stopped")
@@ -2687,6 +2726,11 @@ class LitheClientLS9(LitheClient):
                 except (ConnectionError, OSError):
                     pass
         self._record_local_dsp_command(sub_mb, value, field)
+        if self.state.connected and self.product != PRODUCT_MICRO:
+            # LS9 tunnel writes are audible but are not broadcast back to the
+            # sending LUCI client. Confirm the resulting MCU state separately
+            # so HA does not remain on an optimistic value.
+            self._schedule_dsp_readback()
 
     async def _async_open_ls9_dsp_tunnel(
         self,
@@ -2709,6 +2753,55 @@ class LitheClientLS9(LitheClient):
                 asyncio.open_connection(self.host, DSP_TUNNEL_PORT),
                 timeout=2.0,
             )
+
+    async def async_dsp_refresh(self) -> bool:
+        """Read current LS9 EQ state directly from the MCU tunnel."""
+        if self.product == PRODUCT_MICRO:
+            revision = self.state.dsp_feedback_revision
+            await self.async_subwoofer_refresh()
+            return self.state.dsp_feedback_revision > revision
+
+        request = bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01])
+        tunnel_writer: asyncio.StreamWriter | None = None
+        try:
+            async with self._dsp_refresh_lock:
+                tunnel_reader, tunnel_writer = (
+                    await self._async_open_ls9_dsp_tunnel()
+                )
+                tunnel_writer.write(request)
+                await tunnel_writer.drain()
+
+                chunks: list[bytes] = []
+                deadline = asyncio.get_running_loop().time() + 2.0
+                while asyncio.get_running_loop().time() < deadline:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            tunnel_reader.read(4096),
+                            timeout=0.75 if not chunks else 0.25,
+                        )
+                    except asyncio.TimeoutError:
+                        break
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+
+                if not chunks:
+                    return False
+                revision = self.state.dsp_feedback_revision
+                self._handle_push(
+                    MB_DSP, b"".join(chunks), remote_id=0xAAAA
+                )
+                return self.state.dsp_feedback_revision > revision
+        except Exception as err:
+            _LOGGER.debug("LS9 DSP live readback unavailable: %s", err)
+            return False
+        finally:
+            if tunnel_writer is not None:
+                tunnel_writer.close()
+                try:
+                    await tunnel_writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
 
     async def async_subwoofer_refresh(self) -> None:
         """Request every live Micro Subwoofer setting from its MCU."""
