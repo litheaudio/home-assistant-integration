@@ -220,6 +220,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = LitheAudioCoordinator(hass, client, entry.entry_id)
     await coordinator.async_config_entry_first_refresh()
 
+    # Older releases used the generic product label as the device-registry
+    # name. Preserve explicit user renames, but migrate integration-owned
+    # generic names to the real discovery/config-entry identity. This keeps
+    # e.g. "LitheAudio LWF1V2266D74" as the page heading while the separate
+    # model field remains "WiFi Speaker V2".
+    try:
+        from homeassistant.helpers import device_registry as dr
+
+        entry_name = entry.title.rsplit(" (", 1)[0].strip()
+        if entry_name and entry_name not in set(PRODUCT_NAMES.values()):
+            device_registry = dr.async_get(hass)
+            device = device_registry.async_get_device(
+                identifiers={(DOMAIN, host)}
+            )
+            if (
+                device is not None
+                and not getattr(device, "name_by_user", None)
+                and device.name != entry_name
+            ):
+                device_registry.async_update_device(device.id, name=entry_name)
+                _LOGGER.info(
+                    "Updated speaker device name from %r to %r",
+                    device.name,
+                    entry_name,
+                )
+    except Exception as err:
+        _LOGGER.debug("Device-name migration skipped for %s: %s", host, err)
+
     # Prefer specific model-number/variant fields, then use the product that
     # the client derived from all live LUCI model messages. Some firmware sends
     # numeric zeroes for Model_num/ModelVariant, so ignoring detected_product

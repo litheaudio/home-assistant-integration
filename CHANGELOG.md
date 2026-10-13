@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.79
+
+- Preserve a discovered LS9 speaker identity such as
+  `LitheAudio LWF1V2266D74` as the Home Assistant device name instead of
+  replacing it with the generic model label. Existing generic registry names
+  migrate on reload unless the user explicitly renamed the device.
+- Keep the hardware family, such as `WiFi Speaker V2`, in the separate model
+  field and continue using the full config-entry identity for Spotify Connect
+  target matching.
+
 ## 1.4.78
 
 - Route LS10 Bluetooth MB209 actions and MB210 status reads through MCU

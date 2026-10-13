@@ -169,9 +169,21 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
     @property
     def device_info(self) -> DeviceInfo:
         state = self._client.state
+        entry_name = self._entry.title.rsplit(" (", 1)[0].strip()
+        generic_names = set(PRODUCT_NAMES.values())
+        device_name = (
+            entry_name
+            if entry_name and entry_name not in generic_names
+            else state.name or entry_name
+            or PRODUCT_NAMES.get(self._product, "Lithe Audio")
+        )
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry.data["host"])},
-            name=state.name or PRODUCT_NAMES.get(self._product, "Lithe Audio"),
+            # Discovery knows the LS9's advertised identity even when its
+            # legacy LUCI name is the unhelpful default "A Player". Keep that
+            # identity as the HA device name and expose the hardware family in
+            # `model` below.
+            name=device_name,
             manufacturer="Lithe Audio",
             model=state.model or PRODUCT_NAMES.get(self._product),
             sw_version=state.firmware or None,
