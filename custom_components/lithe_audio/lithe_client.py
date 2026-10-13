@@ -26,7 +26,7 @@ from .const import (
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
     DSP_EQ, DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
-    PRODUCT_MICRO, SUB_DSP_CROSSOVER, SUB_DSP_GAIN, SUB_DSP_LOWPASS,
+    PRODUCT_MICRO, PRODUCT_PRO2, SUB_DSP_CROSSOVER, SUB_DSP_GAIN, SUB_DSP_LOWPASS,
     SUB_DSP_PHASE, SUB_DSP_PROFILE, SUB_DSP_SET_FIELD,
     product_from_model,
 )
@@ -209,6 +209,7 @@ class LitheClient:
         self._bluetooth_target: bool | None = None
         self._bluetooth_target_until: float = 0.0
         self._bluetooth_http_state_known: bool = False
+        self._pending_bluetooth_future: asyncio.Future[bool] | None = None
         # Match the working Control4 driver: serialize all LUCI writes and
         # leave 100 ms between packets.
         self._send_lock = asyncio.Lock()
@@ -414,10 +415,20 @@ class LitheClient:
                    MB_PLAY_STATE,       # 51  Play State (Tx_ but responds)
                    MB_NOW_PLAYING,      # 42  Now Playing JSON (Tx_ but responds)
                    MB_POSITION,         # 49  Position (Tx_ but responds)
-                   MB_TIMEZONE,         # 573 TimeZone
-                   MB_BT_STATUS):       # 210 BT Status (Tx_ but responds)
+                   MB_TIMEZONE):        # 573 TimeZone
             await self._send(0x01, mb, "")
             await asyncio.sleep(0.05)
+
+        # LS10 MCU-owned controls use RID 0x0000. RID 0xAAAA can ACK the
+        # request without returning the Bluetooth radio state, which left the
+        # HA switch showing a restored/optimistic value after startup.
+        await self._send(
+            0x01,
+            MB_BT_STATUS,
+            "",
+            remote_id=0x0000 if self.use_tls else 0xAAAA,
+        )
+        await asyncio.sleep(0.05)
 
         # The TechNote specifies RID 0xAAAA for MB#151, while current Lithe
         # app traffic commonly uses RID 0x0000. Some LS10 firmware only
@@ -748,6 +759,12 @@ class LitheClient:
         """BT command: ON / OFF / ENTPAIR / DISCONNECT."""
         if command in ("ON", "OFF"):
             enabled = command == "ON"
+            if self.use_tls:
+                # LS10 speakers do not expose the legacy LS9 web endpoint.
+                # Send the documented LUCI action through the MCU RemoteID and
+                # require MB#210 to confirm the real hardware state.
+                await self._async_bluetooth_luci_fallback(command, enabled)
+                return
             url = f"http://{self.host}/goform/SetBluetoothmode"
             value = "Bluetooth_ON" if enabled else "Bluetooth_OFF"
             async with self._bluetooth_lock:
@@ -842,15 +859,42 @@ class LitheClient:
     async def _async_bluetooth_luci_fallback(
         self, command: str, enabled: bool
     ) -> None:
-        """Apply Bluetooth ON/OFF through LUCI when the web UI is unreliable."""
-        await self._send(0x02, MB_BLUETOOTH, command)
-        await asyncio.sleep(0.15)
-        await self._send(0x01, MB_BT_STATUS, "")
-        self.state.bt_enabled = enabled
-        self.state.bt_status = f"BLUETOOTH_{command}_LUCI"
+        """Apply Bluetooth through LUCI and require live MB#210 feedback."""
+        remote_id = 0x0000 if self.use_tls else 0xAAAA
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+        self._pending_bluetooth_future = future
         self._bluetooth_target = enabled
-        self._bluetooth_target_until = time.monotonic() + 5.0
-        self._notify()
+        self._bluetooth_target_until = time.monotonic() + 2.0
+        await self._send(0x02, MB_BLUETOOTH, command, remote_id=remote_id)
+        await asyncio.sleep(0.15)
+        await self._send(0x01, MB_BT_STATUS, "", remote_id=remote_id)
+        try:
+            observed = await asyncio.wait_for(future, timeout=1.5)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Bluetooth %s on %s was not confirmed by MB#210",
+                command,
+                self.host,
+            )
+        else:
+            if observed != enabled:
+                _LOGGER.warning(
+                    "Bluetooth %s on %s was rejected; MB#210 reports %s",
+                    command,
+                    self.host,
+                    "ON" if observed else "OFF",
+                )
+            else:
+                _LOGGER.info(
+                    "Bluetooth %s confirmed on %s by MB#210",
+                    command,
+                    self.host,
+                )
+        finally:
+            if self._pending_bluetooth_future is future:
+                self._pending_bluetooth_future = None
+            self._bluetooth_target_until = 0.0
 
     @staticmethod
     def _parse_bluetooth_http_state(body: str) -> bool | None:
@@ -1197,7 +1241,27 @@ class LitheClient:
                     _LOGGER.info(
                         "RX DSP live tunnel report: %d bytes", len(raw)
                     )
+                    revision_before = self.state.dsp_feedback_revision
                     self._handle_push(MB_DSP, raw, DSP_REMOTE_ID)
+                    updated = self.state.dsp_feedback_revision > revision_before
+                    loudness_gain_present = (
+                        b"\x00\x04\x00\x34" in raw
+                        or b"\x00\x05\x00\x34" in raw
+                    )
+                    if self.product == PRODUCT_PRO2 and not loudness_gain_present:
+                        _LOGGER.warning(
+                            "DSP startup report from %s was partial: loudness "
+                            "gain 0x34 was missing; retrying",
+                            self.host,
+                        )
+                        return False
+                    if not updated:
+                        _LOGGER.warning(
+                            "DSP startup report from %s contained no decoded "
+                            "state; retrying",
+                            self.host,
+                        )
+                        return False
                     return True
                 else:
                     # Several firmware builds accept the tunnel request but do
@@ -1823,6 +1887,12 @@ class LitheClient:
             # READY is a player/service status, not reliable radio-state
             # feedback. In particular it can arrive after Bluetooth_OFF.
             if reported is not None:
+                pending_future = self._pending_bluetooth_future
+                if pending_future is not None and not pending_future.done():
+                    self.state.bt_enabled = reported
+                    pending_future.set_result(reported)
+                    self._notify()
+                    return
                 target_pending = (
                     self._bluetooth_target is not None
                     and time.monotonic() < self._bluetooth_target_until

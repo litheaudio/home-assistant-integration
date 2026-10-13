@@ -13,6 +13,7 @@ CONF_CERT_PATH  = "cert_path"
 CONF_KEY_PATH   = "key_path"
 CONF_CAST_GROUP_NAME   = "cast_group_name"
 CONF_CAST_GROUP_ENTITY = "cast_group_entity"
+CONF_SPOTIFY_TARGET    = "spotify_target"
 
 # Default values
 DEFAULT_PORT = 7777

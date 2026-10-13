@@ -33,7 +33,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     BT_OFF, BT_ON, CONF_CAST_GROUP_ENTITY, CONF_CAST_GROUP_NAME, CONF_PRODUCT,
-    DATA_COORDINATOR, DOMAIN, LS9_PRODUCTS, MB_SOURCE,
+    CONF_SPOTIFY_TARGET, DATA_COORDINATOR, DOMAIN, LS9_PRODUCTS, MB_SOURCE,
     PRODUCT_MICRO, PRODUCT_NAMES, PRODUCT_SOURCES, PRODUCT_V2, SOURCES,
     SUB_DSP_PROFILE, SUB_DSP_SET_FIELD, SUB_PROFILE_OPTIONS, caps,
 )
@@ -1978,6 +1978,14 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         active_group = (
             getattr(self._client.state, "active_cast_group", "") or ""
         )
+        configured_target = str(
+            self._entry.options.get(CONF_SPOTIFY_TARGET, "") or ""
+        )
+        if not active_group and configured_target:
+            # Spotify returns the original spelling/case in source_list. Use
+            # the stored mapping only while it is currently advertised, so a
+            # sleeping or renamed target produces an honest unavailable error.
+            return choose_spotify_source(sources, [configured_target])
         candidates = (
             [active_group]
             if active_group
@@ -2037,10 +2045,15 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         if target is None:
             state = self.hass.states.get(spotify_entity_id)
             available = state.attributes.get("source_list", []) if state else []
+            configured_target = str(
+                self._entry.options.get(CONF_SPOTIFY_TARGET, "") or ""
+            )
             message = (
                 "Spotify could not find a Spotify Connect target matching "
-                f"this Lithe speaker. Available targets: {available or 'none'}. "
-                "Open Spotify once, select the Lithe speaker, then retry."
+                f"this Lithe speaker. Configured target: "
+                f"{configured_target or 'automatic matching'}. Available "
+                f"targets: {available or 'none'}. Choose Audio - Spotify "
+                "Connect Target on the device page, then retry."
             )
             _LOGGER.warning(message)
             await self.hass.services.async_call(

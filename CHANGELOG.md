@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.4.78
+
+- Route LS10 Bluetooth MB209 actions and MB210 status reads through MCU
+  RemoteID `00 00`; skip the unavailable legacy LS9 HTTP endpoint on TLS
+  products.
+- Require MB210 hardware feedback before committing Bluetooth state, so a
+  failed command no longer appears successful only inside Home Assistant.
+- Treat an LS10 PRO 2 startup DSP report without loudness-gain subcommand
+  `0x34` as partial and retry instead of retaining the restored dB value.
+- Retain the per-speaker Spotify Connect target mapping introduced in 1.4.77.
+
+## 1.4.77
+
+- Add an `Audio - Spotify Connect Target` selector populated from the live
+  official Spotify integration source list. The selected destination is saved
+  per Lithe speaker and takes precedence over automatic name matching.
+- Keep automatic matching as the default for speakers whose Lithe and Spotify
+  names already agree.
+- Include the configured target in playback warnings so an offline or renamed
+  Spotify Connect destination is immediately identifiable in HA logs.
+
 ## 1.4.76
 
 - Fix Spotify Connect source changes on LS9 products by keeping a registered

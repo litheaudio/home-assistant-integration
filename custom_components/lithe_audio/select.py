@@ -1,11 +1,14 @@
 """Select entities for Lithe Audio DSP selectors."""
 from __future__ import annotations
 
+from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_STATE_CHANGED
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -13,6 +16,7 @@ from .const import (
     CONF_PRODUCT,
     CONF_CAST_GROUP_ENTITY,
     CONF_CAST_GROUP_NAME,
+    CONF_SPOTIFY_TARGET,
     DATA_COORDINATOR,
     DOMAIN,
     DSP_EQ,
@@ -68,7 +72,10 @@ async def async_setup_entry(
 
     # Always add the selector. Cast commonly finishes discovery after this
     # platform is set up; options are resolved live and appear automatically.
-    entities.append(LitheCastGroupSelect(coordinator, entry))
+    entities.extend((
+        LitheSpotifyTargetSelect(coordinator, entry),
+        LitheCastGroupSelect(coordinator, entry),
+    ))
     if c["favourites"]:
         entities.append(LitheFavouriteSaveSlotSelect(coordinator, entry))
 
@@ -455,6 +462,104 @@ class LitheFavouriteSaveSlotSelect(_LitheBaseSelect):
             return
         self._client._favourite_save_slot = max(1, min(MAX_SLOTS, slot))
         self.coordinator.async_set_updated_data(self._client.state)
+        self.async_write_ha_state()
+
+
+class LitheSpotifyTargetSelect(
+    CoordinatorEntity[LitheAudioCoordinator], SelectEntity
+):
+    """Persist the Spotify Connect destination for this physical speaker."""
+
+    _attr_has_entity_name = True
+    _attr_name = audio_control_name(10, "Spotify Connect Target")
+    _attr_icon = "mdi:spotify"
+
+    AUTO_LABEL = "(Automatic name matching)"
+
+    def __init__(self, coordinator: LitheAudioCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._client = coordinator.client
+        self._attr_unique_id = (
+            f"{entry.data['host']}_{entry.entry_id}_spotify_target"
+        )
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry.data["host"])})
+
+    @property
+    def available(self) -> bool:
+        return self._client.state.connected
+
+    def _spotify_sources(self) -> list[str]:
+        registry = er.async_get(self.hass)
+        sources: set[str] = set()
+        for registry_entry in registry.entities.values():
+            if (
+                registry_entry.domain != MEDIA_PLAYER_DOMAIN
+                or registry_entry.platform != "spotify"
+                or registry_entry.disabled_by is not None
+            ):
+                continue
+            state = self.hass.states.get(registry_entry.entity_id)
+            if state is None:
+                continue
+            sources.update(
+                source
+                for source in state.attributes.get("source_list", [])
+                if isinstance(source, str) and source.strip()
+            )
+        return sorted(sources, key=str.casefold)
+
+    @property
+    def options(self) -> list[str]:
+        targets = self._spotify_sources()
+        current = str(
+            self._entry.options.get(CONF_SPOTIFY_TARGET, "") or ""
+        )
+        if current and current not in targets:
+            targets.append(current)
+            targets.sort(key=str.casefold)
+        return [self.AUTO_LABEL, *targets]
+
+    @property
+    def current_option(self) -> str:
+        return str(
+            self._entry.options.get(CONF_SPOTIFY_TARGET, "")
+            or self.AUTO_LABEL
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        @callback
+        def _spotify_state_changed(event: Event) -> None:
+            entity_id = str(event.data.get("entity_id", ""))
+            registry_entry = er.async_get(self.hass).async_get(entity_id)
+            if (
+                registry_entry is not None
+                and registry_entry.domain == MEDIA_PLAYER_DOMAIN
+                and registry_entry.platform == "spotify"
+            ):
+                self.async_write_ha_state()
+
+        self.async_on_remove(
+            self.hass.bus.async_listen(EVENT_STATE_CHANGED, _spotify_state_changed)
+        )
+
+    async def async_select_option(self, option: str) -> None:
+        options = dict(self._entry.options)
+        if option == self.AUTO_LABEL:
+            options.pop(CONF_SPOTIFY_TARGET, None)
+        elif option in self._spotify_sources():
+            options[CONF_SPOTIFY_TARGET] = option
+        else:
+            return
+        self.hass.data[DOMAIN][self._entry.entry_id][
+            "_skip_next_options_reload"
+        ] = True
+        self.hass.config_entries.async_update_entry(self._entry, options=options)
         self.async_write_ha_state()
 
 

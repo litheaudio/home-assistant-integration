@@ -60,6 +60,9 @@
       },
       "cast_group": {
         "name": "Audio — Cast Group"
+      },
+      "spotify_target": {
+        "name": "Audio — Spotify Connect Target"
       }
     },
     "number": {
