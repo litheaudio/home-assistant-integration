@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.83
+
+- Read LS9 EQ Preset, Speaker Output, Loudness, Night Mode, Balance and all
+  three EQ bands from the MCU during startup and every coordinator refresh.
+- Follow LS9 `All_informationGET` with the individual getter sequence used by
+  the Lithe app, covering firmware that returns a partial all-settings report.
+- Retain post-write MCU confirmation so Home Assistant changes are replaced
+  by the actual speaker state rather than an optimistic UI value.
+
 ## 1.4.82
 
 - Clear title, artist, album, artwork, duration and position immediately when

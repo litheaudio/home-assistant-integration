@@ -25,7 +25,8 @@ from .const import (
     TRANSPORT_NEXT,
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
-    DSP_EQ, DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
+    DSP_BALANCE, DSP_EQ, DSP_EQ_BANDS, DSP_LOUDNESS, DSP_NIGHTMODE,
+    DSP_OUTPUT, DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
     PRODUCT_MICRO, PRODUCT_PRO2, SUB_DSP_CROSSOVER, SUB_DSP_GAIN, SUB_DSP_LOWPASS,
     SUB_DSP_PHASE, SUB_DSP_PROFILE, SUB_DSP_SET_FIELD,
     product_from_model,
@@ -2761,14 +2762,28 @@ class LitheClientLS9(LitheClient):
             await self.async_subwoofer_refresh()
             return self.state.dsp_feedback_revision > revision
 
-        request = bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01])
+        requests = [
+            bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01]),
+            # Older LS9 firmware can return a partial or empty response to
+            # All_informationGET. The Lithe app follows it with individual
+            # getter requests, including each EQ-band getter field.
+            bytes([0x00, 0x03, 0x00, DSP_EQ_BANDS, 0x01]),
+            bytes([0x00, 0x03, 0x00, DSP_EQ_BANDS, 0x03]),
+            bytes([0x00, 0x03, 0x00, DSP_EQ_BANDS, 0x05]),
+            bytes([0x00, 0x03, 0x00, DSP_EQ, 0x01]),
+            bytes([0x00, 0x03, 0x00, DSP_LOUDNESS, 0x01]),
+            bytes([0x00, 0x03, 0x00, DSP_NIGHTMODE, 0x01]),
+            bytes([0x00, 0x03, 0x00, DSP_BALANCE, 0x01]),
+            bytes([0x00, 0x03, 0x00, DSP_OUTPUT, 0x01]),
+        ]
         tunnel_writer: asyncio.StreamWriter | None = None
         try:
             async with self._dsp_refresh_lock:
                 tunnel_reader, tunnel_writer = (
                     await self._async_open_ls9_dsp_tunnel()
                 )
-                tunnel_writer.write(request)
+                for request in requests:
+                    tunnel_writer.write(request)
                 await tunnel_writer.drain()
 
                 chunks: list[bytes] = []
@@ -2873,7 +2888,14 @@ class LitheClientLS9(LitheClient):
     async def async_refresh(self) -> None:
         """Refresh ordinary LUCI state plus Micro Subwoofer MCU settings."""
         await super().async_refresh()
-        await self.async_subwoofer_refresh()
+        if self.product == PRODUCT_MICRO:
+            await self.async_subwoofer_refresh()
+        else:
+            # LS9 does not maintain the persistent LUCI session that delivers
+            # LS10 MB#112 pushes. Poll the MCU tunnel each coordinator cycle
+            # so changes from the Lithe app and power-cycle defaults replace
+            # restored or optimistic Home Assistant state.
+            await self.async_dsp_refresh()
 
     async def _send(
         self,
