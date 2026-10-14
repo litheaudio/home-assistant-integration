@@ -314,14 +314,15 @@ class LitheClient:
 
         # Request initial state
         await self.async_refresh()
+        dsp_refreshed = await self.async_dsp_refresh()
         # The HOST-MCU dump is slower than ordinary LUCI reads and some
-        # installations have several speakers. Run it after setup so it can
-        # never hold Home Assistant Core startup. The background task retries
-        # briefly while the MCU tunnel comes online; later changes arrive as
-        # live MB#112 pushes.
-        self._dsp_initial_refresh_task = asyncio.create_task(
-            self._delayed_initial_dsp_refresh()
-        )
+        # installations have several speakers. One bounded read is required
+        # before entity creation so HA starts with the live speaker settings.
+        # If the tunnel is still coming online, retry it in the background.
+        if not dsp_refreshed:
+            self._dsp_initial_refresh_task = asyncio.create_task(
+                self._delayed_initial_dsp_refresh()
+            )
 
     async def _delayed_initial_dsp_refresh(self) -> None:
         """Fetch live DSP state after Core and the entity platforms can start."""
@@ -421,14 +422,13 @@ class LitheClient:
             await self._send(0x01, mb, "")
             await asyncio.sleep(0.05)
 
-        # LS10 MCU-owned controls use RID 0x0000. RID 0xAAAA can ACK the
-        # request without returning the Bluetooth radio state, which left the
-        # HA switch showing a restored/optimistic value after startup.
+        # Bluetooth is a LUCI radio service, so query it on the standard
+        # application route used by the Lithe app and MB#209 commands.
         await self._send(
             0x01,
             MB_BT_STATUS,
             "",
-            remote_id=0x0000 if self.use_tls else 0xAAAA,
+            remote_id=0xAAAA,
         )
         await asyncio.sleep(0.05)
 
@@ -799,8 +799,8 @@ class LitheClient:
             enabled = command == "ON"
             if self.use_tls:
                 # LS10 speakers do not expose the legacy LS9 web endpoint.
-                # Send the documented LUCI action through the MCU RemoteID and
-                # require MB#210 to confirm the real hardware state.
+                # Send the documented LUCI action and require MB#210 to
+                # confirm the real hardware state.
                 await self._async_bluetooth_luci_fallback(command, enabled)
                 return
             url = f"http://{self.host}/goform/SetBluetoothmode"
@@ -898,7 +898,10 @@ class LitheClient:
         self, command: str, enabled: bool
     ) -> None:
         """Apply Bluetooth through LUCI and require live MB#210 feedback."""
-        remote_id = 0x0000 if self.use_tls else 0xAAAA
+        # MB#209/210 are LUCI radio controls. The normal application route is
+        # authoritative on LS10 too; the MCU route can ACK without changing
+        # the Bluetooth service.
+        remote_id = 0xAAAA
         loop = asyncio.get_running_loop()
         future: asyncio.Future[bool] = loop.create_future()
         self._pending_bluetooth_future = future
@@ -1247,7 +1250,8 @@ class LitheClient:
             _LOGGER.debug("DSP live refresh skipped because writer is unavailable")
             return False
 
-        sub = bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01])
+        checksum = (DSP_STATUS_ALL + 0x01) & 0xFF
+        sub = bytes([0x00, 0x03, checksum, DSP_STATUS_ALL, 0x01])
         async with self._dsp_refresh_lock:
             tunnel_writer: asyncio.StreamWriter | None = None
             try:

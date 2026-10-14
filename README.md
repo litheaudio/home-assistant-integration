@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.90** — removes unsupported Cast, Spotify-target and Bluetooth controls from LS9 speakers.
+**Latest: 1.4.92** — removes global routing selectors and fixes LS10 startup EQ, slider positions and Bluetooth routing.
 
 ---
 
@@ -30,11 +30,11 @@ Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on po
 | Product | Platform | TLS | Chimes | EQ/DSP | Loudness | Bluetooth |
 |---|---|---|---|---|---|---|
 | WiFi PRO 2 | LS10 | ✅ | 14 | EQ, Output, Balance | On/Off + gain | ✅ |
-| WiFi Speaker V3 | LS10 | ✅ | 6 | EQ, Output, Balance | On/Off | ✅ |
-| iO1 | LS10 | ✅ | 10 | EQ, Output, Balance | On/Off | ✅ |
-| WiFi Speaker V2 | LS9 | — | 0 | EQ, Output, Balance | On/Off | ✅ |
-| WiFi PRO | LS9 | — | 6 | EQ, Output, Balance | On/Off | ✅ |
-| Micro Subwoofer | LS9 | — | 0 | Profiles, gain, crossover, phase, low-pass | — | ✅ |
+| WiFi Speaker V3 | LS10 | ✅ | 14 | EQ, Output, Balance | On/Off | ✅ |
+| iO1 | LS10 | ✅ | 10 | EQ, Output, Balance | — | ✅ |
+| WiFi Speaker V2 | LS9 | — | 0 | — | — | — |
+| WiFi PRO | LS9 | — | 6 | — | — | — |
+| Micro Subwoofer | LS9 | — | 0 | — | — | ✅ |
 
 ---
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.92
+
+- Remove Cast Group and Spotify Connect Target selectors from every speaker
+  model and clean up their existing registered entities during setup.
+- Match the Lithe app's checksummed LS10 full-state request and perform one
+  bounded live MCU read before entity creation, with background retries when
+  the tunnel is not ready. This replaces restored EQ state at startup.
+- Keep the full EQ slider range outside Normal so each thumb reflects its
+  actual dB value; writes remain blocked while a fixed preset is selected.
+- Route LS10 Bluetooth MB#209 commands and MB#210 status requests through the
+  standard LUCI application RemoteID instead of the MCU-only route.
+
+## 1.4.91
+
+- Remove the complete EQ block from the LS9 Micro Subwoofer: profile, gain,
+  crossover, low-pass filter, phase and Save Changes.
+- Use the existing capability cleanup to remove all six previously registered
+  subwoofer-control entities after the integration reloads.
+- Leave media playback and the remaining Micro Subwoofer controls unchanged.
+
 ## 1.4.90
 
 - Remove Cast Group, Spotify Connect Target and Bluetooth entities from the

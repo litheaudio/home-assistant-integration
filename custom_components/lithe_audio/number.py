@@ -174,22 +174,12 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
             return float(val)
         return float(self._value)
 
-    def _locked_value(self) -> float:
-        value = getattr(self._client.state, self._state_attr, None)
-        return float(value if value is not None else self._value)
-
     @property
     def native_min_value(self) -> float:
-        # HA has no separate read-only NumberEntity mode. A zero-width range
-        # keeps the preset's live value visible while disabling slider travel.
-        if self._lock_to_normal and self._client.state.dsp_eq != 0:
-            return self._locked_value()
         return float(self._minimum)
 
     @property
     def native_max_value(self) -> float:
-        if self._lock_to_normal and self._client.state.dsp_eq != 0:
-            return self._locked_value()
         return float(self._maximum)
 
     async def async_set_native_value(self, value: float) -> None:
