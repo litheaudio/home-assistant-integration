@@ -219,6 +219,8 @@ class PrayerScheduler:
                     "mode":     "start",
                     "volume":   int(entry["volume"]),
                     "speakers": entry["speakers"],
+                    "title": f"{str(entry.get('prayer') or 'Prayer').title()} Prayer",
+                    "artist": "Prayer Schedule",
                 },
                 blocking=True,
             )

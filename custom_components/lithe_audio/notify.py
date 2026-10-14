@@ -63,6 +63,7 @@ def _resolve_coordinator(
 
 async def _tannoy_start(
     hass: HomeAssistant, speakers: list[str], url: str, volume: int,
+    *, title: str | None = None, artist: str | None = None,
 ) -> None:
     """Save vol+play_state, pause, raise volume, play URL on first speaker.
 
@@ -111,7 +112,9 @@ async def _tannoy_start(
         successful: list[LitheAudioCoordinator] = []
         for coord in resolved:
             try:
-                await coord.client.async_play_url(url)
+                await coord.client.async_play_url(
+                    url, title=title, artist=artist
+                )
                 successful.append(coord)
             except Exception as e:
                 _LOGGER.error(
@@ -192,13 +195,17 @@ def register_tannoy_service(hass: HomeAssistant) -> None:
         mode     = (call.data.get("mode") or nested.get("mode") or "start").lower()
         volume   = int(call.data.get("volume", nested.get("volume", 80)))
         speakers = call.data.get("speakers") or nested.get("speakers") or []
+        title = call.data.get("title") or nested.get("title")
+        artist = call.data.get("artist") or nested.get("artist")
         if isinstance(speakers, str):
             speakers = [s.strip() for s in speakers.split(",") if s.strip()]
         if not isinstance(speakers, list):
             speakers = [speakers]
 
         if mode == "start":
-            await _tannoy_start(hass, speakers, message, volume)
+            await _tannoy_start(
+                hass, speakers, message, volume, title=title, artist=artist
+            )
         elif mode == "end":
             await _tannoy_end(hass, speakers)
         else:
@@ -218,12 +225,16 @@ def register_tannoy_service(hass: HomeAssistant) -> None:
         mode     = (data.get("mode") or "start").lower()
         volume   = int(data.get("volume", 80))
         speakers = data.get("speakers") or []
+        title = data.get("title")
+        artist = data.get("artist")
         if isinstance(speakers, str):
             speakers = [s.strip() for s in speakers.split(",") if s.strip()]
         if not isinstance(speakers, list):
             speakers = [speakers]
         if mode == "start":
-            await _tannoy_start(hass, speakers, message, volume)
+            await _tannoy_start(
+                hass, speakers, message, volume, title=title, artist=artist
+            )
         elif mode == "end":
             await _tannoy_end(hass, speakers)
 

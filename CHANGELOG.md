@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.97
+
+- Show integration-owned playback text on the HA player for Direct URL,
+  prayer and alarm audio instead of leaving the player blank or showing
+  metadata from the previous source.
+- Label scheduled prayers with the prayer name, saved alarms with
+  `Alarm: <name>`, Quran presets with the Juz number and built-in radio
+  presets with the station name.
+- Add optional player title/subtitle fields to the Play URL and Tannoy
+  services. Labels persist through Direct URL source confirmation and clear
+  on stop or when another source takes over.
+
+## 1.4.96
+
+- Restore Spotify playback without the removed target selector by resolving
+  exactly one Spotify Connect destination from the speaker's live HA/Lithe
+  name. Partial and ambiguous matches are rejected.
+- Stop instructing users to select the removed Spotify target control when a
+  destination cannot be resolved.
+- Reject partial delayed Spotify metadata replies after Direct URL playback
+  starts, preventing old title, artist and artwork from reappearing when the
+  firmware omits fields such as album in its stale MB#42 response.
+
 ## 1.4.95
 
 - Stop restoring Pro2, WiFi v3 and iO1 EQ preset/band values from Home

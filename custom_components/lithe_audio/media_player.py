@@ -48,6 +48,7 @@ from .media_delegate import (
 from .spotify_bridge import (
     SPOTIFY_CONTENT_PREFIX,
     SPOTIFY_LIBRARY_ITEMS,
+    choose_exact_spotify_source,
     choose_spotify_source,
     decode_spotify_content,
     encode_spotify_content,
@@ -430,6 +431,8 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             title = cast_state.attributes.get("media_title")
             if title:
                 return str(title)
+        if self._client.state.display_title:
+            return self._client.state.display_title
         # Prefer real title from MB#42, fall back to filename of the URL
         # we last asked the speaker to play (helps when speaker hasn't
         # pushed metadata yet for Direct URL streams).
@@ -457,7 +460,11 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             artist = cast_state.attributes.get("media_artist")
             if artist:
                 return str(artist)
-        return self._client.state.artist or None
+        return (
+            self._client.state.display_artist
+            or self._client.state.artist
+            or None
+        )
 
     @property
     def media_album_name(self) -> str | None:
@@ -1185,8 +1192,11 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             return
 
         # Direct URL preset (Adhan/Quran/radio from our Browse Media tree)
+        display_title: str | None = None
+        display_artist: str | None = None
         if media_id.startswith("lithe_url:"):
             media_id = media_id[len("lithe_url:"):]
+            display_title, display_artist = self._direct_url_display(media_id)
             # Fall through to URL playback below
 
         # Resolve media_source:// URIs (Radio Browser, My Media, TTS, etc.)
@@ -1342,7 +1352,13 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
                 return
 
             # No Cast group active — play locally only
-            await self._client.async_play_url(media_id)
+            extra_title = str(extra.get("title") or "").strip()
+            extra_artist = str(extra.get("artist") or "").strip()
+            await self._client.async_play_url(
+                media_id,
+                title=extra_title or display_title,
+                artist=extra_artist or display_artist,
+            )
             # Deferred user-visible feedback. The speaker should auto-
             # switch to Direct URL (source 17) and start playing within
             # ~2-3 seconds. If it doesn't, the audio path is probably
@@ -1996,7 +2012,7 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         return item
 
     def _spotify_target(self, spotify_entity_id: str) -> str | None:
-        """Resolve the explicitly selected speaker or Cast-group target."""
+        """Resolve the Cast group, saved mapping, or exact speaker name."""
         state = self.hass.states.get(spotify_entity_id)
         sources = state.attributes.get("source_list", []) if state else []
         active_group = (
@@ -2006,12 +2022,21 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             self._entry.options.get(CONF_SPOTIFY_TARGET, "") or ""
         )
         target = active_group or configured_target
-        if not target:
-            return None
-        # Spotify returns the original spelling/case in source_list. Resolve
-        # only the user's explicit mapping (or selected Cast group); never
-        # guess from the device/config-entry name.
-        return choose_spotify_source(sources, [target])
+        if target:
+            return choose_spotify_source(sources, [target])
+
+        # The target selector is intentionally hidden from every product.
+        # Resolve the destination internally, but only when one Spotify
+        # Connect source exactly matches a live Lithe/HA device name after
+        # harmless case, spacing and punctuation normalization. Never use a
+        # partial match here: two similarly named speakers must fail safely.
+        entry_name = self._entry.title.rsplit(" (", 1)[0].strip()
+        candidates = (
+            self.name or "",
+            self._client.state.name or "",
+            entry_name,
+        )
+        return choose_exact_spotify_source(sources, candidates)
 
     async def _async_spotify_target(
         self, spotify_entity_id: str
@@ -2070,10 +2095,11 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             )
             message = (
                 "Spotify could not find a Spotify Connect target matching "
-                f"this Lithe speaker. Configured target: "
-                f"{configured_target or 'not selected'}. Available "
-                f"targets: {available or 'none'}. Choose Audio - Spotify "
-                "Connect Target on the device page, then retry."
+                f"this Lithe speaker. Speaker name: {self.name}. "
+                f"Configured legacy target: "
+                f"{configured_target or 'none'}. Available targets: "
+                f"{available or 'none'}. Rename the Spotify Connect device "
+                "to exactly match the Lithe speaker name, then retry."
             )
             _LOGGER.warning(message)
             await self.hass.services.async_call(
@@ -2195,6 +2221,27 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             children=children,
             children_media_class=MediaClass.MUSIC,
         )
+
+    @staticmethod
+    def _direct_url_display(url: str) -> tuple[str | None, str | None]:
+        """Return a friendly player label for built-in URL presets."""
+        from .const import ADHAN_PRESETS, QURAN_JUZ
+
+        for label, preset_url in ADHAN_PRESETS.items():
+            if url == preset_url:
+                return label, "Prayer"
+        for juz, preset_url in QURAN_JUZ.items():
+            if url == preset_url:
+                return f"Quran - Juz {juz}", "Quran"
+        radio_names = {
+            "http://stream.live.vc.bbcmedia.co.uk/bbc_radio_one": "BBC Radio 1",
+            "http://stream.live.vc.bbcmedia.co.uk/bbc_radio_two": "BBC Radio 2",
+            "http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm": "BBC Radio 4",
+            "http://media-ice.musicradio.com/ClassicFMMP3": "Classic FM",
+        }
+        if url in radio_names:
+            return radio_names[url], "Internet Radio"
+        return None, None
 
     @callback
     def _handle_coordinator_update(self) -> None:

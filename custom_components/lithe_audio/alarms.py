@@ -405,13 +405,22 @@ class LitheAlarmManager:
                 _LOGGER.warning("Volume set failed on %s: %s", ent_id, e)
 
         # Trigger playback on Lithe coordinators (direct LUCI)
+        alarm_title = f"Alarm: {alarm.get('name') or 'Alarm'}"
         for c in coords:
             try:
                 if url:
-                    await c.client.async_play_url(url)
+                    await c.client.async_play_url(
+                        url, title=alarm_title, artist="Scheduled Alarm"
+                    )
                 elif chime_slot is not None:
+                    c.client.set_playback_display(
+                        alarm_title, "Scheduled Alarm"
+                    )
                     await c.client.async_play_chime(chime_slot)
                 elif favourite_slot is not None:
+                    c.client.set_playback_display(
+                        alarm_title, "Scheduled Alarm"
+                    )
                     await c.client.async_play_favourite(favourite_slot)
             except Exception as e:
                 _LOGGER.error("Play failed on %s: %s", c.client.host, e)

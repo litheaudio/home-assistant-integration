@@ -121,6 +121,13 @@ play_url:
       example: "http://192.168.1.100/announcement.mp3"
       selector:
         text:
+    title:
+      name: Player title
+      description: Optional friendly title shown on the media player page.
+      required: false
+      example: "Morning announcement"
+      selector:
+        text:
 
 play_favourite:
   name: Play Favourite
@@ -1205,6 +1212,18 @@ tannoy:
     message:
       name: URL
       description: HTTP(S) audio URL (start mode only).
+      required: false
+      selector:
+        text:
+    title:
+      name: Player title
+      description: Optional friendly title shown while the URL is playing.
+      required: false
+      selector:
+        text:
+    artist:
+      name: Player subtitle
+      description: Optional subtitle shown below the player title.
       required: false
       selector:
         text:

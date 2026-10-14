@@ -11,6 +11,7 @@ import struct
 import time
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Optional
+from urllib.parse import unquote, urlparse
 
 import aiohttp
 
@@ -86,6 +87,8 @@ class SpeakerState:
     # while waiting for the speaker to push fresh MB#42 metadata after
     # a source switch to Direct URL.
     last_played_url: str = ""
+    display_title: str = ""
+    display_artist: str = ""
 
     @property
     def position_seconds(self) -> float:
@@ -203,7 +206,7 @@ class LitheClient:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._artwork_refresh_task: Optional[asyncio.Task] = None
         self._metadata_refresh_task: Optional[asyncio.Task] = None
-        self._stale_direct_url_metadata: tuple[str, str, str] | None = None
+        self._stale_direct_url_metadata: tuple[str, str, str, str] | None = None
         self._dsp_initial_refresh_task: Optional[asyncio.Task] = None
         self._dsp_readback_task: Optional[asyncio.Task] = None
         self._last_nonzero_volume: int = self.state.volume
@@ -584,6 +587,9 @@ class LitheClient:
 
     async def async_stop(self) -> None:
         await self._send(0x02, MB_TRANSPORT, TRANSPORT_STOP)
+        self.state.display_title = ""
+        self.state.display_artist = ""
+        self._notify()
 
     async def async_next_track(self) -> None:
         await self._send(0x02, MB_TRANSPORT, TRANSPORT_NEXT)
@@ -664,9 +670,35 @@ class LitheClient:
         self.state.repeat = "off"
         if source_id != 17:
             self.state.last_played_url = ""
+            self.state.display_title = ""
+            self.state.display_artist = ""
             self._stale_direct_url_metadata = None
 
-    async def async_play_url(self, url: str) -> None:
+    def set_playback_display(self, title: str, artist: str = "") -> None:
+        """Set integration-owned player text for scheduled/local playback."""
+        self.state.display_title = str(title or "").strip()
+        self.state.display_artist = str(artist or "").strip()
+        self._notify()
+
+    @staticmethod
+    def _url_display_title(url: str) -> str:
+        """Create a readable fallback title for an arbitrary URL."""
+        try:
+            parsed = urlparse(url)
+            name = unquote(parsed.path.rsplit("/", 1)[-1]).strip()
+            if name:
+                if "." in name:
+                    name = name.rsplit(".", 1)[0]
+                return name.replace("-", " ").replace("_", " ").strip()
+            if parsed.hostname:
+                return parsed.hostname
+        except (TypeError, ValueError):
+            pass
+        return "Direct URL"
+
+    async def async_play_url(
+        self, url: str, *, title: str | None = None, artist: str | None = None
+    ) -> None:
         """Push a direct stream URL to the speaker (MB#41 DIRECT).
 
         Match the working Control4 path exactly: MB#41 SET with
@@ -680,6 +712,7 @@ class LitheClient:
             self.state.title,
             self.state.artist,
             self.state.album,
+            self.state.artwork_url,
         )
         self._stale_direct_url_metadata = (
             previous_metadata if any(previous_metadata) else None
@@ -688,6 +721,10 @@ class LitheClient:
         # Store the URL so the media player can display it as a friendly
         # title while metadata is being fetched
         self.state.last_played_url = url
+        self.state.display_title = str(
+            title or self._url_display_title(url)
+        ).strip()
+        self.state.display_artist = str(artist or "Direct URL").strip()
         self._notify()
         await self._send(0x02, MB_BROWSE, f"PLAYITEM:DIRECT:{url}")
         # Trigger several metadata refreshes — first immediate (helps if
@@ -2157,9 +2194,16 @@ class LitheClient:
             new_artist = ""
 
         incoming_track = (new_title, new_artist, new_album)
+        art = _first(
+            "CoverArtUrl", "CoverArtURL", "coverarturl",
+            "AlbumArt", "Artwork", "ArtworkURI", "AlbumArtURI",
+            "albumart", "artwork", "albumArt", "artworkUri", "AlbumArtUri",
+            "CoverArt", "coverart", "cover", "Cover", "Image", "image",
+            "logo", "Logo", "Icon", "icon",
+        )
         if (
             self._stale_direct_url_metadata is not None
-            and incoming_track == self._stale_direct_url_metadata
+            and self._matches_stale_direct_url_metadata(incoming_track, art)
         ):
             _LOGGER.debug(
                 "Ignoring stale previous-source metadata after Direct URL start"
@@ -2191,13 +2235,6 @@ class LitheClient:
                 self.state.repeat = "off"
 
         # Artwork — real key on Lithe firmware (CR443GP_3713) is "CoverArtUrl"
-        art = _first(
-            "CoverArtUrl", "CoverArtURL", "coverarturl",
-            "AlbumArt", "Artwork", "ArtworkURI", "AlbumArtURI",
-            "albumart", "artwork", "albumArt", "artworkUri", "AlbumArtUri",
-            "CoverArt", "coverart", "cover", "Cover", "Image", "image",
-            "logo", "Logo", "Icon", "icon",
-        )
         # Some firmwares return a relative path — only accept if it looks like a URL
         if art and (art.startswith("http://") or art.startswith("https://")):
             self._cancel_artwork_refresh()
@@ -2244,6 +2281,31 @@ class LitheClient:
 
         # Live streams report no duration
         self.state.is_live = (self.state.duration_ms == 0)
+
+    def _matches_stale_direct_url_metadata(
+        self, incoming_track: tuple[str, str, str], artwork: str
+    ) -> bool:
+        """Recognize partial late MB#42 replies from the previous source."""
+        stale = self._stale_direct_url_metadata
+        if stale is None:
+            return False
+
+        incoming = (*incoming_track, artwork)
+        comparable = [
+            new == old
+            for new, old in zip(incoming, stale)
+            if new and old
+        ]
+        if not comparable or not all(comparable):
+            return False
+
+        # Require a strong identity field. Firmwares often omit album or
+        # artist on a delayed reply, which made tuple equality too strict and
+        # allowed stale Spotify artwork back into Direct URL playback.
+        return bool(
+            (incoming_track[0] and incoming_track[0] == stale[0])
+            or (artwork and artwork == stale[3])
+        )
 
     def _cancel_artwork_refresh(self) -> None:
         """Cancel delayed refreshes for a previous local cover image."""

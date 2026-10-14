@@ -111,3 +111,20 @@ def choose_spotify_source(
         ):
             close_matches.append(source)
     return close_matches[0] if len(close_matches) == 1 else None
+
+
+def choose_exact_spotify_source(
+    sources: Iterable[str], candidates: Iterable[str]
+) -> str | None:
+    """Choose one unambiguous Spotify target by normalized exact name."""
+    source_list = [source for source in sources if isinstance(source, str)]
+    normalized_candidates = {
+        normalize_device_name(candidate)
+        for candidate in candidates
+        if isinstance(candidate, str) and normalize_device_name(candidate)
+    }
+    matches = [
+        source for source in source_list
+        if normalize_device_name(source) in normalized_candidates
+    ]
+    return matches[0] if len(matches) == 1 else None

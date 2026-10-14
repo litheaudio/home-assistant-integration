@@ -811,7 +811,10 @@ def _register_services(hass: HomeAssistant) -> None:
         url = str(call.data.get("url", "")).strip()
         if not url:
             return
-        await _for_each(call, lambda c: c.async_play_url(url))
+        title = str(call.data.get("title", "") or "").strip() or None
+        await _for_each(
+            call, lambda c: c.async_play_url(url, title=title)
+        )
 
     async def svc_play_favourite(call: ServiceCall) -> None:
         """Play a saved favourite by slot number.
@@ -930,7 +933,10 @@ def _register_services(hass: HomeAssistant) -> None:
             "notify", "lithe_tannoy",
             {
                 "message": url,
-                "data": {"mode": "start", "volume": volume, "speakers": speakers},
+                "data": {
+                    "mode": "start", "volume": volume, "speakers": speakers,
+                    "title": f"Quran - Juz {juz}", "artist": "Quran",
+                },
             },
             blocking=False,
         )
@@ -953,7 +959,10 @@ def _register_services(hass: HomeAssistant) -> None:
             "notify", "lithe_tannoy",
             {
                 "message": url,
-                "data": {"mode": "start", "volume": volume, "speakers": speakers},
+                "data": {
+                    "mode": "start", "volume": volume, "speakers": speakers,
+                    "title": str(preset), "artist": "Prayer",
+                },
             },
             blocking=False,
         )
