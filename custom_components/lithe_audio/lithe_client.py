@@ -2436,6 +2436,7 @@ class LitheClientLS9(LitheClient):
         self._ls9_transaction_lock = asyncio.Lock()
         self._source_auth_task: asyncio.Task | None = None
         self._source_auth_error: Exception | None = None
+        self._initial_ordinary_refresh_task: asyncio.Task | None = None
 
     @staticmethod
     def _build_binary_packet(
@@ -2939,15 +2940,61 @@ class LitheClientLS9(LitheClient):
         await self.async_transact(mbid, payload, cmd_type, remote_id)
 
     async def async_connect(self) -> None:
-        """LS9: no persistent connection — just mark connected and prime state."""
+        """Prime live MCU state, then fetch slower LUCI metadata in background.
+
+        A complete LS9 metadata sweep opens a separate transactional socket for
+        every mailbox and can take well over Home Assistant's setup warning
+        threshold.  DSP state is the startup-critical data: read it first so
+        RestoreEntity cannot replace speaker values with stale HA values, then
+        let the ordinary name/source/firmware sweep finish after platforms are
+        available.
+        """
         self.state.connected = True
-        await self.async_refresh()
+        await self.async_dsp_refresh()
+        self._notify()
+
+        if (
+            self._initial_ordinary_refresh_task is None
+            or self._initial_ordinary_refresh_task.done()
+        ):
+            self._initial_ordinary_refresh_task = asyncio.create_task(
+                self._async_initial_ordinary_refresh()
+            )
+
+    async def _async_initial_ordinary_refresh(self) -> None:
+        """Populate non-DSP LS9 state without holding config-entry setup."""
+        try:
+            await super().async_refresh()
+            self._notify()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            _LOGGER.warning(
+                "Deferred LS9 startup refresh failed on %s: %s",
+                self.host,
+                err,
+            )
 
     async def async_disconnect(self) -> None:
+        if (
+            self._initial_ordinary_refresh_task
+            and not self._initial_ordinary_refresh_task.done()
+        ):
+            self._initial_ordinary_refresh_task.cancel()
+            try:
+                await self._initial_ordinary_refresh_task
+            except asyncio.CancelledError:
+                pass
         if self._source_auth_task and not self._source_auth_task.done():
             self._source_auth_task.cancel()
             try:
                 await self._source_auth_task
             except (asyncio.CancelledError, ConnectionError, OSError):
+                pass
+        if self._dsp_readback_task and not self._dsp_readback_task.done():
+            self._dsp_readback_task.cancel()
+            try:
+                await self._dsp_readback_task
+            except asyncio.CancelledError:
                 pass
         self.state.connected = False

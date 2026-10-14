@@ -61,6 +61,17 @@ STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.groups"
 
 
+@callback
+def async_describe_on_off_states(hass, registry) -> None:
+    """Exclude this helper module from Home Assistant group-state setup.
+
+    Home Assistant treats every integration-level ``group.py`` as a group
+    platform.  This file implements Lithe media-player helpers rather than an
+    entity domain, so it must explicitly opt out of the group-state registry.
+    """
+    registry.exclude_domain(DOMAIN)
+
+
 def new_group_id() -> str:
     return f"group_{uuid.uuid4().hex[:6]}"
 

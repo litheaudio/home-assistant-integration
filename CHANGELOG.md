@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.85
+
+- Read authoritative LS9 MCU/DSP state before Home Assistant creates entities,
+  preventing restored EQ, output, loudness and night-mode values from appearing
+  while the slower transactional metadata sweep is still running.
+- Move the remaining LS9 startup metadata sweep to a managed background task so
+  multiple legacy speakers no longer hold Core startup past the integration
+  setup warning threshold.
+- Implement Home Assistant's required group-platform state hook and explicitly
+  exclude the Lithe helper module, removing the
+  `async_describe_on_off_states` exception logged on every restart.
+- Re-verified live WiFi Speaker V2 writes through Home Assistant against direct
+  MCU reads: EQ preset, speaker output, loudness and night mode all reached and
+  matched the speaker before their original values were restored.
+
 ## 1.4.84
 
 - Verify LS9 DSP behavior against a live WiFi Speaker V2 instead of assuming
