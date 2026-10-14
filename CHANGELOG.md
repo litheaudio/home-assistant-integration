@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.84
+
+- Verify LS9 DSP behavior against a live WiFi Speaker V2 instead of assuming
+  LS10 response timing. Captured EQ Preset `0x0A`, Loudness `0x0B`, Night Mode
+  `0x0C`, and Speaker Output `0x0F` SET/GET cycles all changed the MCU and were
+  restored successfully.
+- Consume and decode the authoritative response on the same LS9 raw tunnel
+  used for a write. The integration previously discarded this reader and
+  closed the connection before processing speaker confirmation.
+- Keep LS9 refresh tunnels open across quiet gaps because V2 full-state
+  reports are fragmented; later Speaker Output and EQ records are no longer
+  lost after the first 250 ms pause.
+
 ## 1.4.83
 
 - Read LS9 EQ Preset, Speaker Output, Loudness, Night Mode, Balance and all

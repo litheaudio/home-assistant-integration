@@ -2701,11 +2701,38 @@ class LitheClientLS9(LitheClient):
             " ".join(f"{byte:02X}" for byte in payload),
         )
         tunnel_writer: asyncio.StreamWriter | None = None
+        revision_before = self.state.dsp_feedback_revision
         try:
             async with self._dsp_refresh_lock:
-                _reader, tunnel_writer = await self._async_open_ls9_dsp_tunnel()
+                tunnel_reader, tunnel_writer = await self._async_open_ls9_dsp_tunnel()
                 tunnel_writer.write(payload)
                 await tunnel_writer.drain()
+
+                # LS9 returns the authoritative MCU value on this raw socket,
+                # often as a SET echo followed by a fragmented state report.
+                # Previously the reader was discarded and the tunnel closed
+                # immediately, leaving HA on restored/optimistic state.
+                chunks: list[bytes] = []
+                deadline = asyncio.get_running_loop().time() + 1.5
+                while asyncio.get_running_loop().time() < deadline:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            tunnel_reader.read(4096), timeout=0.35
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    if payload in b"".join(chunks):
+                        # The MCU echoed this exact setter and therefore
+                        # confirmed it. Do not hold a HA slider/switch service
+                        # call open while unrelated full-state fragments trail.
+                        break
+                if chunks:
+                    self._handle_push(
+                        MB_DSP, b"".join(chunks), remote_id=0xAAAA
+                    )
         except Exception as err:
             # A small number of early LS9 builds expose MB112 directly but do
             # not create the MB111 listener. Keep that documented route as a
@@ -2726,7 +2753,8 @@ class LitheClientLS9(LitheClient):
                     await tunnel_writer.wait_closed()
                 except (ConnectionError, OSError):
                     pass
-        self._record_local_dsp_command(sub_mb, value, field)
+        if self.state.dsp_feedback_revision == revision_before:
+            self._record_local_dsp_command(sub_mb, value, field)
         if self.state.connected and self.product != PRODUCT_MICRO:
             # LS9 tunnel writes are audible but are not broadcast back to the
             # sending LUCI client. Confirm the resulting MCU state separately
@@ -2787,7 +2815,7 @@ class LitheClientLS9(LitheClient):
                 await tunnel_writer.drain()
 
                 chunks: list[bytes] = []
-                deadline = asyncio.get_running_loop().time() + 2.0
+                deadline = asyncio.get_running_loop().time() + 2.5
                 while asyncio.get_running_loop().time() < deadline:
                     try:
                         chunk = await asyncio.wait_for(
@@ -2795,7 +2823,11 @@ class LitheClientLS9(LitheClient):
                             timeout=0.75 if not chunks else 0.25,
                         )
                     except asyncio.TimeoutError:
-                        break
+                        # Captured V2 firmware pauses between fragments of the
+                        # all-settings response. Keep the tunnel open until the
+                        # overall deadline so output/preset records arriving in
+                        # a later fragment are not discarded.
+                        continue
                     if not chunk:
                         break
                     chunks.append(chunk)
