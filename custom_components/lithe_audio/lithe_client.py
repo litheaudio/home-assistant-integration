@@ -27,7 +27,9 @@ from .const import (
     TRANSPORT_STOP,
     DSP_BALANCE, DSP_EQ, DSP_EQ_BANDS, DSP_LOUDNESS, DSP_NIGHTMODE,
     DSP_OUTPUT, DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
-    PRODUCT_MICRO, PRODUCT_PRO2, SUB_DSP_CROSSOVER, SUB_DSP_GAIN, SUB_DSP_LOWPASS,
+    IO1_TREBLE_HIGH_FIELD, IO1_TREBLE_LOW_FIELD, IO1_TREBLE_MID_FIELD,
+    PRODUCT_IO1, PRODUCT_MICRO, PRODUCT_PRO2,
+    SUB_DSP_CROSSOVER, SUB_DSP_GAIN, SUB_DSP_LOWPASS,
     SUB_DSP_PHASE, SUB_DSP_PROFILE, SUB_DSP_SET_FIELD,
     product_from_model,
 )
@@ -1250,18 +1252,37 @@ class LitheClient:
             _LOGGER.debug("DSP live refresh skipped because writer is unavailable")
             return False
 
-        checksum = (DSP_STATUS_ALL + 0x01) & 0xFF
-        sub = bytes([0x00, 0x03, checksum, DSP_STATUS_ALL, 0x01])
+        def _get_packet(sub_mb: int, field: int = 0x01) -> bytes:
+            checksum = (sub_mb + field) & 0xFF
+            return bytes([0x00, 0x03, checksum, sub_mb, field])
+
+        requests = [_get_packet(DSP_STATUS_ALL)]
+        if self.product == PRODUCT_IO1:
+            # iO1 does not consistently include its three crossover bands in
+            # All_informationGET. The Lithe app follows the combined request
+            # with the odd-numbered getter paired with each even setter.
+            requests.extend((
+                _get_packet(DSP_EQ_BANDS, IO1_TREBLE_LOW_FIELD - 1),
+                _get_packet(DSP_EQ_BANDS, IO1_TREBLE_MID_FIELD - 1),
+                _get_packet(DSP_EQ_BANDS, IO1_TREBLE_HIGH_FIELD - 1),
+                _get_packet(DSP_EQ),
+                _get_packet(DSP_BALANCE),
+                _get_packet(DSP_OUTPUT),
+            ))
         async with self._dsp_refresh_lock:
             tunnel_writer: asyncio.StreamWriter | None = None
             try:
                 tunnel_reader, tunnel_writer = await self._async_open_dsp_tunnel()
 
-                tunnel_writer.write(sub)
+                for request in requests:
+                    tunnel_writer.write(request)
                 await tunnel_writer.drain()
                 _LOGGER.debug(
-                    "TX DSP tunnel full-state request %s",
-                    " ".join(f"{byte:02X}" for byte in sub),
+                    "TX DSP tunnel live-state requests %s",
+                    ", ".join(
+                        " ".join(f"{byte:02X}" for byte in request)
+                        for request in requests
+                    ),
                 )
 
                 chunks: list[bytes] = []

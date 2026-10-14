@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.93
+
+- Reads iO1 EQ state live at startup using the combined DSP report plus the
+  three individual crossover-band getters used by the Lithe app.
+- Also confirms the iO1 preset, balance and speaker-output values during the
+  same live refresh.
+- Keeps Pro 2 and WiFi v3 preset-derived Treble, Mid and Bass values at their
+  true slider positions while rejecting manual writes unless Normal is active.
+- Publishes `preset_locked` and `read_only` state attributes for dashboards
+  that support read-only styling.
+
 ## 1.4.92
 
 - Remove Cast Group and Spotify Connect Target selectors from every speaker

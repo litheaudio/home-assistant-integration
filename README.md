@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.92** — removes global routing selectors and fixes LS10 startup EQ, slider positions and Bluetooth routing.
+**Latest: 1.4.93** — adds complete live iO1 EQ readback and preserves preset-derived slider positions while blocking manual writes.
 
 ---
 

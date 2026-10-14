@@ -1,7 +1,7 @@
 {
   "domain": "lithe_audio",
   "name": "Lithe Audio",
-  "version": "1.4.92",
+  "version": "1.4.93",
   "config_flow": true,
   "documentation": "https://github.com/LitheAudio-Official/home-assistant-integration",
   "issue_tracker": "https://github.com/LitheAudio-Official/home-assistant-integration/issues",

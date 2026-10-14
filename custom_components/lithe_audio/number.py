@@ -182,9 +182,18 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
     def native_max_value(self) -> float:
         return float(self._maximum)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, bool]:
+        """Expose preset ownership without distorting the displayed range."""
+        locked = self._lock_to_normal and self._client.state.dsp_eq != 0
+        return {"preset_locked": locked, "read_only": locked}
+
     async def async_set_native_value(self, value: float) -> None:
         import time
         if self._lock_to_normal and self._client.state.dsp_eq != 0:
+            # Keep the preset-derived value and force any optimistic frontend
+            # movement back to the speaker-confirmed position immediately.
+            self.async_write_ha_state()
             return
         self._value = max(self._minimum, min(self._maximum, int(value)))
         self._optimistic_until = time.monotonic() + 5.0
