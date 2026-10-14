@@ -2439,6 +2439,23 @@ class LitheClientLS9(LitheClient):
         self._initial_ordinary_refresh_task: asyncio.Task | None = None
 
     @staticmethod
+    def _build_tunnel_packet(
+        command: int,
+        field: int,
+        value: int | None = None,
+    ) -> bytes:
+        """Build the checksummed HOST-MCU packet used by the Lithe app.
+
+        Lithe Audio LA1.7.5.22 calculates byte 2 as the unsigned sum of the
+        command, field and payload bytes. LS9 replies use zero in that byte,
+        so receive parsing deliberately continues to treat it as opaque.
+        """
+        body = [command & 0xFF, field & 0xFF]
+        if value is not None:
+            body.append(value & 0xFF)
+        return bytes([0x00, len(body) + 1, sum(body) & 0xFF, *body])
+
+    @staticmethod
     def _build_binary_packet(
         cmd_type: int,
         mbid: int,
@@ -2686,14 +2703,7 @@ class LitheClientLS9(LitheClient):
             if value >= 0
             else 0xF0 | min(0x0F, abs(value))
         )
-        payload = bytes([
-            0x00,
-            0x04,
-            (sub_mb >> 8) & 0xFF,
-            sub_mb & 0xFF,
-            field & 0xFF,
-            byte_val,
-        ])
+        payload = self._build_tunnel_packet(sub_mb, field, byte_val)
         _LOGGER.info(
             "TX LS9 DSP tunnel sub=0x%02x field=0x%02x val=%d: %s",
             sub_mb,
@@ -2725,7 +2735,11 @@ class LitheClientLS9(LitheClient):
                     if not chunk:
                         break
                     chunks.append(chunk)
-                    if payload in b"".join(chunks):
+                    response = bytes([
+                        0x00, 0x04, 0x00, sub_mb & 0xFF,
+                        field & 0xFF, byte_val,
+                    ])
+                    if response in b"".join(chunks):
                         # The MCU echoed this exact setter and therefore
                         # confirmed it. Do not hold a HA slider/switch service
                         # call open while unrelated full-state fragments trail.
@@ -2792,18 +2806,18 @@ class LitheClientLS9(LitheClient):
             return self.state.dsp_feedback_revision > revision
 
         requests = [
-            bytes([0x00, 0x03, 0x00, DSP_STATUS_ALL, 0x01]),
+            self._build_tunnel_packet(DSP_STATUS_ALL, 0x01),
             # Older LS9 firmware can return a partial or empty response to
             # All_informationGET. The Lithe app follows it with individual
             # getter requests, including each EQ-band getter field.
-            bytes([0x00, 0x03, 0x00, DSP_EQ_BANDS, 0x01]),
-            bytes([0x00, 0x03, 0x00, DSP_EQ_BANDS, 0x03]),
-            bytes([0x00, 0x03, 0x00, DSP_EQ_BANDS, 0x05]),
-            bytes([0x00, 0x03, 0x00, DSP_EQ, 0x01]),
-            bytes([0x00, 0x03, 0x00, DSP_LOUDNESS, 0x01]),
-            bytes([0x00, 0x03, 0x00, DSP_NIGHTMODE, 0x01]),
-            bytes([0x00, 0x03, 0x00, DSP_BALANCE, 0x01]),
-            bytes([0x00, 0x03, 0x00, DSP_OUTPUT, 0x01]),
+            self._build_tunnel_packet(DSP_EQ_BANDS, 0x01),
+            self._build_tunnel_packet(DSP_EQ_BANDS, 0x03),
+            self._build_tunnel_packet(DSP_EQ_BANDS, 0x05),
+            self._build_tunnel_packet(DSP_EQ, 0x01),
+            self._build_tunnel_packet(DSP_LOUDNESS, 0x01),
+            self._build_tunnel_packet(DSP_NIGHTMODE, 0x01),
+            self._build_tunnel_packet(DSP_BALANCE, 0x01),
+            self._build_tunnel_packet(DSP_OUTPUT, 0x01),
         ]
         tunnel_writer: asyncio.StreamWriter | None = None
         try:
@@ -2855,7 +2869,7 @@ class LitheClientLS9(LitheClient):
         """Request every live Micro Subwoofer setting from its MCU."""
         if self.product != PRODUCT_MICRO:
             return
-        request = bytes.fromhex("00 03 00 00 00")
+        request = self._build_tunnel_packet(0x00, 0x00)
         tunnel_writer: asyncio.StreamWriter | None = None
         try:
             async with self._dsp_refresh_lock:
