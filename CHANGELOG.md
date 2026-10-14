@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.4.95
+
+- Stop restoring Pro2, WiFi v3 and iO1 EQ preset/band values from Home
+  Assistant recorder history at startup.
+- Require a live LS10 startup report to contain both the EQ preset and EQ
+  bands before accepting it as a successful EQ synchronisation.
+- Keep EQ entities unavailable when firmware omits live EQ readback, instead
+  of showing a stale preset/band combination as though it came from the
+  speaker. Live app pushes and successful HA commands still populate them.
+
+## 1.4.94
+
+- Render the WiFi PRO 2 and WiFi Speaker V3 fixed preset curves exactly as
+  the Lithe app: Acoustic `+2/+2/+2`, Jazz `+3/-2/+2`, Pop `+2/+3/-2` and
+  Hip-Hop `-3/0/+2` (Treble/Mid/Bass).
+- Apply those fixed curves after startup reports as well as local and app
+  preset changes, preventing the stored Normal values from placing every
+  fixed-preset slider at the same position.
+- Treat iO1 reports that contain only balance/output as partial responses,
+  retain the last confirmed EQ state and keep retrying instead of incorrectly
+  declaring EQ synchronisation complete.
+
 ## 1.4.93
 
 - Reads iO1 EQ state live at startup using the combined DSP report plus the

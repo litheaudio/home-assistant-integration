@@ -149,30 +149,27 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None:
-            try:
-                self._value = max(
-                    self._minimum,
-                    min(self._maximum, int(float(last_state.state))),
-                )
-            except (TypeError, ValueError):
-                pass
-            else:
-                if getattr(self._client.state, self._state_attr, None) is None:
-                    self._client.state.restore_dsp_snapshot({
-                        self._state_attr: self._value,
-                    })
+        # Do not restore LS10 EQ from HA recorder history. A remembered value
+        # can differ from the speaker after a restart or an app-side change.
+        # Keep the entity unavailable until live speaker feedback or a
+        # successful local command establishes the current value.
 
     @property
-    def native_value(self) -> float:
+    def available(self) -> bool:
+        return (
+            self._client.state.connected
+            and getattr(self._client.state, self._state_attr, None) is not None
+        )
+
+    @property
+    def native_value(self) -> float | None:
         import time
         if time.monotonic() < self._optimistic_until:
             return float(self._value)
         val = getattr(self._client.state, self._state_attr, None)
         if val is not None:
             return float(val)
-        return float(self._value)
+        return None
 
     @property
     def native_min_value(self) -> float:

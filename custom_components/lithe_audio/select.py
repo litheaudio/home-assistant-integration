@@ -100,7 +100,7 @@ class _LitheBaseSelect(CoordinatorEntity[LitheAudioCoordinator], SelectEntity):
         return self._client.state.connected
 
     @property
-    def current_option(self) -> str:
+    def current_option(self) -> str | None:
         return self._current
 
     @callback
@@ -253,13 +253,17 @@ class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state in self._attr_options:
-            self._current = last_state.state
-            if self._client.state.dsp_eq is None:
-                self._client.state.restore_dsp_snapshot({
-                    "dsp_eq": self._attr_options.index(self._current),
-                })
+        # Never present recorder history as current speaker state. Several
+        # LS10 firmware builds omit EQ from startup reports; those controls
+        # must remain unavailable until genuine feedback or a successful
+        # local command establishes the value.
+
+    @property
+    def available(self) -> bool:
+        return (
+            self._client.state.connected
+            and isinstance(self._client.state.dsp_eq, int)
+        )
 
     @property
     def current_option(self) -> str:
@@ -268,7 +272,7 @@ class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
             value = getattr(self._client.state, "dsp_eq", None)
             if isinstance(value, int) and 0 <= value < len(self._attr_options):
                 return self._attr_options[value]
-        return self._current
+        return None
 
     async def async_select_option(self, option: str) -> None:
         import time

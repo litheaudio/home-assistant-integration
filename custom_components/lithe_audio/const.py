@@ -252,6 +252,15 @@ def loudness_gain_to_wire(value: int | float) -> int:
     return max(-10, min(10, int(value))) + 10
 
 EQ_PRESETS  = ["Normal", "Acoustic", "Jazz", "Pop", "Hip-Hop"]
+# LS10 firmware reports the stored Normal/manual band values even when a
+# fixed preset is active.  These are the curves rendered by the Lithe app and
+# observed in the preset-change packet capture (treble, mid, bass).
+LS10_FIXED_EQ_PRESET_BANDS = {
+    1: (2, 2, 2),
+    2: (3, -2, 2),
+    3: (2, 3, -2),
+    4: (-3, 0, 2),
+}
 IO1_EQ_PRESETS = ["Outdoor", "Indoor", "Pendent"]
 # iO1 reuses the three 0x09 setter fields, but they address three treble
 # crossover bands rather than the generic Treble/Mid/Bass controls.

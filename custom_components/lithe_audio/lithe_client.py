@@ -28,7 +28,8 @@ from .const import (
     DSP_BALANCE, DSP_EQ, DSP_EQ_BANDS, DSP_LOUDNESS, DSP_NIGHTMODE,
     DSP_OUTPUT, DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
     IO1_TREBLE_HIGH_FIELD, IO1_TREBLE_LOW_FIELD, IO1_TREBLE_MID_FIELD,
-    PRODUCT_IO1, PRODUCT_MICRO, PRODUCT_PRO2,
+    LS10_FIXED_EQ_PRESET_BANDS,
+    PRODUCT_IO1, PRODUCT_MICRO, PRODUCT_PRO2, PRODUCT_V3,
     SUB_DSP_CROSSOVER, SUB_DSP_GAIN, SUB_DSP_LOWPASS,
     SUB_DSP_PHASE, SUB_DSP_PROFILE, SUB_DSP_SET_FIELD,
     product_from_model,
@@ -1236,9 +1237,28 @@ class LitheClient:
         if attr is None:
             return
         setattr(self.state, attr, state_value)
+        if sub_mb == DSP_EQ:
+            self._apply_ls10_fixed_eq_curve(value, reset_normal=True)
         self.state.dsp_state_source = "local"
         self.state.dsp_feedback_revision += 1
         self._notify()
+
+    def _apply_ls10_fixed_eq_curve(
+        self, preset: int, *, reset_normal: bool = False
+    ) -> bool:
+        """Mirror the fixed LS10 preset curve displayed by the Lithe app."""
+        if self.product not in {PRODUCT_PRO2, PRODUCT_V3}:
+            return False
+        bands = LS10_FIXED_EQ_PRESET_BANDS.get(preset)
+        if bands is None:
+            if preset != 0 or not reset_normal:
+                return False
+            bands = (0, 0, 0)
+        treble, mid, bass = bands
+        self.state.dsp_treble = treble
+        self.state.dsp_mid = mid
+        self.state.dsp_bass = bass
+        return True
 
     async def async_dsp_refresh(self) -> bool:
         """Read the current HOST-MCU settings through the MB#111 tunnel.
@@ -1318,6 +1338,26 @@ class LitheClient:
                             self.host,
                         )
                         return False
+                    if self.product in {PRODUCT_PRO2, PRODUCT_V3, PRODUCT_IO1}:
+                        # Some LS10 builds answer unrelated controls but omit
+                        # every EQ field.  That partial response must not be
+                        # reported as a successful EQ synchronisation.
+                        response_subcommands = {
+                            raw[index + 3]
+                            for index in range(max(0, len(raw) - 4))
+                            if raw[index] == 0x00
+                            and raw[index + 1] in (0x04, 0x05)
+                        }
+                        eq_state_present = {
+                            DSP_EQ_BANDS, DSP_EQ
+                        }.issubset(response_subcommands)
+                        if not eq_state_present:
+                            _LOGGER.debug(
+                                "LS10 DSP report from %s omitted EQ preset/bands; "
+                                "keeping the last confirmed EQ state and retrying",
+                                self.host,
+                            )
+                            return False
                     if not updated:
                         _LOGGER.warning(
                             "DSP startup report from %s contained no decoded "
@@ -1930,6 +1970,13 @@ class LitheClient:
                 # Apply state updates
                 for attr, val in updates:
                     setattr(self.state, attr, val)
+
+                # PRO 2/V3 reports retain the Normal/manual band registers
+                # while a fixed preset is selected.  The Lithe app renders
+                # the preset curve instead; do the same after parsing the
+                # complete packet so stale/raw manual values cannot win.
+                if self.state.dsp_eq in LS10_FIXED_EQ_PRESET_BANDS:
+                    self._apply_ls10_fixed_eq_curve(self.state.dsp_eq)
 
                 if updates:
                     self.state.dsp_state_source = "speaker"
