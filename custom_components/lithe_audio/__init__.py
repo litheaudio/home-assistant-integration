@@ -343,6 +343,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         obsolete_unique_ids.append(
             ("select", f"{host}_{entry.entry_id}_highpass")
         )
+    if not product_caps["eq_select"]:
+        obsolete_unique_ids.extend([
+            ("select", f"{host}_{entry.entry_id}_eq"),
+            ("number", f"{host}_{entry.entry_id}_treble"),
+            ("number", f"{host}_{entry.entry_id}_mid"),
+            ("number", f"{host}_{entry.entry_id}_bass"),
+        ])
+    if not product_caps["output_select"]:
+        obsolete_unique_ids.append(
+            ("select", f"{host}_{entry.entry_id}_output")
+        )
+    if not product_caps["balance_number"]:
+        obsolete_unique_ids.append(
+            ("number", f"{host}_{entry.entry_id}_balance")
+        )
     if not product_caps["tuning_switch"]:
         obsolete_unique_ids.append(
             ("switch", f"{host}_{entry.entry_id}_tuning")
@@ -358,6 +373,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not product_caps["nightmode_switch"]:
         obsolete_unique_ids.append(
             ("switch", f"{host}_{entry.entry_id}_nightmode")
+        )
+    if not product_caps["bluetooth_switch"]:
+        obsolete_unique_ids.append(
+            ("switch", f"{host}_{entry.entry_id}_bluetooth")
+        )
+    if not product_caps["cast_group_select"]:
+        obsolete_unique_ids.append(
+            ("select", f"{host}_{entry.entry_id}_cast_group")
+        )
+    if not product_caps["spotify_target_select"]:
+        obsolete_unique_ids.append(
+            ("select", f"{host}_{entry.entry_id}_spotify_target")
         )
     if not product_caps["favourites"]:
         obsolete_unique_ids.extend([

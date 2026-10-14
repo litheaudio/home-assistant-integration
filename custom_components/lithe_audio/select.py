@@ -70,12 +70,10 @@ async def async_setup_entry(
             LitheSubwooferPhaseSelect(coordinator, entry),
         ))
 
-    # Always add the selector. Cast commonly finishes discovery after this
-    # platform is set up; options are resolved live and appear automatically.
-    entities.extend((
-        LitheSpotifyTargetSelect(coordinator, entry),
-        LitheCastGroupSelect(coordinator, entry),
-    ))
+    if c["spotify_target_select"]:
+        entities.append(LitheSpotifyTargetSelect(coordinator, entry))
+    if c["cast_group_select"]:
+        entities.append(LitheCastGroupSelect(coordinator, entry))
     if c["favourites"]:
         entities.append(LitheFavouriteSaveSlotSelect(coordinator, entry))
 

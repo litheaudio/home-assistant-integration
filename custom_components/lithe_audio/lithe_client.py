@@ -200,6 +200,7 @@ class LitheClient:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._artwork_refresh_task: Optional[asyncio.Task] = None
         self._metadata_refresh_task: Optional[asyncio.Task] = None
+        self._stale_direct_url_metadata: tuple[str, str, str] | None = None
         self._dsp_initial_refresh_task: Optional[asyncio.Task] = None
         self._dsp_readback_task: Optional[asyncio.Task] = None
         self._last_nonzero_volume: int = self.state.volume
@@ -660,6 +661,7 @@ class LitheClient:
         self.state.repeat = "off"
         if source_id != 17:
             self.state.last_played_url = ""
+            self._stale_direct_url_metadata = None
 
     async def async_play_url(self, url: str) -> None:
         """Push a direct stream URL to the speaker (MB#41 DIRECT).
@@ -671,10 +673,20 @@ class LitheClient:
         After sending the URL, schedule a metadata refresh so the HA
         media player shows the new track info promptly.
         """
-        await self._send(0x02, MB_BROWSE, f"PLAYITEM:DIRECT:{url}")
+        previous_metadata = (
+            self.state.title,
+            self.state.artist,
+            self.state.album,
+        )
+        self._stale_direct_url_metadata = (
+            previous_metadata if any(previous_metadata) else None
+        )
+        self._clear_now_playing_for_source(17)
         # Store the URL so the media player can display it as a friendly
         # title while metadata is being fetched
         self.state.last_played_url = url
+        self._notify()
+        await self._send(0x02, MB_BROWSE, f"PLAYITEM:DIRECT:{url}")
         # Trigger several metadata refreshes — first immediate (helps if
         # the speaker is still on the old source), then after a delay
         # (gives MB#10/MB#11 auth flow time to complete and source to
@@ -2049,19 +2061,17 @@ class LitheClient:
                     return str(v)
             return ""
 
-        old_track = (self.state.title, self.state.artist, self.state.album)
-
-        self.state.title  = _first(
+        new_title = _first(
             "TrackName", "trackname", "track_name",
             "Title", "title", "track", "Track", "TrackTitle", "track_title",
             "name", "Name", "currentTitle", "current_title", "song", "Song",
             "currentSong", "current_song",
         )
-        self.state.artist = _first(
+        new_artist = _first(
             "Artist", "artist", "Performer", "performer",
             "currentArtist", "current_artist", "ArtistName", "artist_name",
         )
-        self.state.album  = _first(
+        new_album = _first(
             "Album", "album", "AlbumName", "album_name",
             "currentAlbum", "current_album",
         )
@@ -2070,9 +2080,24 @@ class LitheClient:
         # "Artist" field for Spotify Connect. Newer Lithe firmware (this one)
         # exposes the proper "TrackName" so we don't need the swap, but it
         # remains as a fallback for older firmware.
-        if not self.state.title and self.state.artist:
-            self.state.title = self.state.artist
-            self.state.artist = ""
+        if not new_title and new_artist:
+            new_title = new_artist
+            new_artist = ""
+
+        incoming_track = (new_title, new_artist, new_album)
+        if (
+            self._stale_direct_url_metadata is not None
+            and incoming_track == self._stale_direct_url_metadata
+        ):
+            _LOGGER.debug(
+                "Ignoring stale previous-source metadata after Direct URL start"
+            )
+            return
+        if self._stale_direct_url_metadata is not None and any(incoming_track):
+            self._stale_direct_url_metadata = None
+
+        old_track = (self.state.title, self.state.artist, self.state.album)
+        self.state.title, self.state.artist, self.state.album = incoming_track
         track_changed = old_track != (
             self.state.title, self.state.artist, self.state.album
         )

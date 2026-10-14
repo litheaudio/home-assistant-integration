@@ -67,6 +67,7 @@ _PLAYABLE_TYPES = {
 
 # Internal content_id prefix for favourites
 _FAV_PREFIX = "lithe_fav://"
+_FAVOURITE_FOLDER = "lithe_favourites"
 # Internal content_id prefix for chimes
 _CHIME_PREFIX = "lithe_chime://"
 # Browse Media action for the same operation as the heart button.
@@ -127,18 +128,17 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         )
 
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_player"
-        if self._product == PRODUCT_V2:
-            # Restore the original V2 sort key so its primary player remains
-            # above the model's many Audio controls on HA's device page.
-            self._attr_has_entity_name = True
-            self._attr_name = "A Player"
-        else:
-            self._attr_has_entity_name = False
-            self._attr_name = (
-                self._client.state.name
-                or entry.title.rsplit(" (", 1)[0]
-                or PRODUCT_NAMES.get(self._product, "Lithe Audio")
-            )
+        entry_name = entry.title.rsplit(" (", 1)[0].strip()
+        live_name = (self._client.state.name or "").strip()
+        generic_names = set(PRODUCT_NAMES.values()) | {"A Player"}
+        self._attr_has_entity_name = False
+        self._attr_name = (
+            entry_name
+            if entry_name and entry_name not in generic_names
+            else live_name
+            if live_name and live_name not in generic_names
+            else entry_name or PRODUCT_NAMES.get(self._product, "Lithe Audio")
+        )
 
         # Build source list from product capability matrix.
         #
@@ -1498,6 +1498,54 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         if media_content_id == "lithe_direct_url":
             return self._build_direct_url_folder()
 
+        if media_content_id == _FAVOURITE_FOLDER:
+            if not self._supports_favourites:
+                raise BrowseError("Favourites are not supported by this model")
+            from .local_favs import MAX_SLOTS, get_local_favs
+            manager = get_local_favs(self.hass)
+            local_by_slot = {
+                int(item["slot"]): item
+                for item in (manager.list_all() if manager else [])
+            }
+            native_by_slot = {
+                int(item.get("slot", 0) or 0): item
+                for item in (self._client.state.favourites or [])
+                if int(item.get("slot", 0) or 0) > 0
+            }
+            children = []
+            for slot in range(1, MAX_SLOTS + 1):
+                local = local_by_slot.get(slot, {})
+                native = native_by_slot.get(slot, {})
+                local_name = str(local.get("name") or "")
+                name = (
+                    local_name
+                    if local_name and local_name != "(empty)"
+                    else str(native.get("name") or f"Favourite {slot}")
+                )
+                local_url = str(local.get("url") or "")
+                children.append(BrowseMedia(
+                    title=f"{slot}: {name}",
+                    media_class=MediaClass.MUSIC,
+                    media_content_id=(
+                        f"lithe_local_fav:{slot}"
+                        if local_url
+                        else f"{_FAV_PREFIX}{slot}"
+                    ),
+                    media_content_type=MediaType.MUSIC,
+                    can_play=True,
+                    can_expand=False,
+                ))
+            return BrowseMedia(
+                title="Favourites",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=_FAVOURITE_FOLDER,
+                media_content_type="library",
+                can_play=False,
+                can_expand=True,
+                children=children,
+                children_media_class=MediaClass.MUSIC,
+            )
+
         if media_content_id == _SAVE_FAVOURITE_FOLDER:
             if not self._supports_favourites:
                 raise BrowseError("Favourites are not supported by this model")
@@ -1562,55 +1610,20 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
 
         if self._supports_favourites:
             children.append(BrowseMedia(
+                title="Favourites",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=_FAVOURITE_FOLDER,
+                media_content_type="library",
+                can_play=False,
+                can_expand=True,
+            ))
+            children.append(BrowseMedia(
                 title="Save Current Track",
                 media_class=MediaClass.DIRECTORY,
                 media_content_id=_SAVE_FAVOURITE_FOLDER,
                 media_content_type="library",
                 can_play=False,
                 can_expand=True,
-            ))
-
-        # 1a) HA-side favourites (saved by Heart button or fav_save service)
-        local_slots: set[int] = set()
-        name_overrides: dict[int, str] = {}
-        try:
-            from .local_favs import get_local_favs
-            local_favs_mgr = get_local_favs(self.hass)
-            if self._supports_favourites and local_favs_mgr:
-                for fav in local_favs_mgr.list_all():
-                    slot = int(fav["slot"])
-                    if fav.get("name") and fav["name"] != "(empty)":
-                        name_overrides[slot] = str(fav["name"])
-                    if not fav.get("url"):
-                        continue  # skip empty slots
-                    local_slots.add(slot)
-                    children.append(BrowseMedia(
-                        title=f"❤ {fav['name']}",
-                        media_class=MediaClass.MUSIC,
-                        media_content_id=f"lithe_local_fav:{fav['slot']}",
-                        media_content_type=MediaType.MUSIC,
-                        can_play=True,
-                        can_expand=False,
-                    ))
-        except Exception as e:
-            _LOGGER.debug("Failed to list local favourites: %s", e)
-
-        # 1b) Firmware favourites (Spotify/AirPlay saved on speaker)
-        for fav in (
-            self._client.state.favourites if self._supports_favourites else []
-        ):
-            slot = int(fav.get("slot", 0) or 0)
-            if slot in local_slots:
-                continue
-            children.append(BrowseMedia(
-                title=name_overrides.get(
-                    slot, fav.get("name", f"Favourite {slot}")
-                ),
-                media_class=MediaClass.MUSIC,
-                media_content_id=f"{_FAV_PREFIX}{slot}",
-                media_content_type=MediaType.MUSIC,
-                can_play=True,
-                can_expand=False,
             ))
 
         # 2) Direct URL folder (Adhan, Quran, internet radio presets)

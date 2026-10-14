@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.86** — app-exact checksummed LS9 DSP commands and live startup readback.
+**Latest: 1.4.90** — removes unsupported Cast, Spotify-target and Bluetooth controls from LS9 speakers.
 
 ---
 
