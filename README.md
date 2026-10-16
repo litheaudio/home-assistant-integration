@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.99** — removes Bluetooth from Micro Subwoofer and fixes Bluetooth switching on supported speakers using MB#209 control with MB#50 source feedback.
+**Latest: 1.4.101** — restores the working LS10 EQ path and carries the app-sniffed Bluetooth MCU command through MB#112 without opening or blocking the EQ raw tunnel.
 
 ---
 

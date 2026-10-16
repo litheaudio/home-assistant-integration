@@ -197,6 +197,10 @@ BT_OFF     = "OFF"
 BT_PAIR    = "ENTPAIR"
 BT_DISC    = "DISCONNECT"
 
+# Bluetooth service state used by the current Lithe app through the raw
+# HOST-MCU tunnel. Field 0x01 reads the state; field 0x02 writes 0/1.
+BT_MCU_STATE = 0x20
+
 # ── DSP sub-MB IDs (LS10 MB#112 tunnel) ─────────────────────────────────────
 # Confirmed from labelled Lithe app captures and live audible testing against
 # WiFi v3 firmware 20250512_0201_RC11 on 2026-09-28/29. The payload is:
@@ -219,6 +223,17 @@ DSP_TUNING    = 0x0D   # 0=13L enclosure, 1=open-back protection
 DSP_STATUS_ALL = 0x15  # read-only MCU settings report trigger
 DSP_TUNNEL_PORT = 4444 # vendor-documented MB#111 TCP tunnel example port
 
+# iO1 uses a separate control family for its selectable 2/4/6 kHz treble
+# bands.  TREBLE_GAIN carries two payload bytes: band index (0..2) followed
+# by an unsigned slider index (0..12, representing -6..+6 dB).  Its preset
+# selector is likewise distinct from the PRO 2/V3 preset command.
+IO1_TREBLE_GAIN = 0x25
+IO1_BASS_BOOST = 0x26
+IO1_PRESET = 0x27
+IO1_TREBLE_LOW_BAND = 0
+IO1_TREBLE_MID_BAND = 1
+IO1_TREBLE_HIGH_BAND = 2
+
 # WiFi Micro Subwoofer MCU profile (LS9 MB112 tunnel data). The vendor
 # workbook defines command IDs 0x02..0x05 and the 0x01 feedback / 0x02 setter
 # fields. PROFILE is included in the full-state report immediately before
@@ -238,15 +253,6 @@ DSP_BASS_FIELD   = 0x06
 DSP_MID_FIELD    = 0x04
 DSP_TREBLE_FIELD = 0x02
 
-# The MCU command table pairs odd GET selectors with even SET selectors:
-#   01/02 = Treble Low, 03/04 = Treble Mid, 05/06 = Treble High.
-# HA writes must use the even selector from each pair.  Using the odd feedback
-# selector produces a successful MB112 envelope without changing the DSP.
-IO1_TREBLE_LOW_FIELD  = 0x02
-IO1_TREBLE_MID_FIELD  = 0x04
-IO1_TREBLE_HIGH_FIELD = 0x06
-
-
 def loudness_gain_to_wire(value: int | float) -> int:
     """Convert the -10..+10 dB UI scale to the MCU's 0..20 index."""
     return max(-10, min(10, int(value))) + 10
@@ -262,14 +268,12 @@ LS10_FIXED_EQ_PRESET_BANDS = {
     4: (-3, 0, 2),
 }
 IO1_EQ_PRESETS = ["Outdoor", "Indoor", "Pendent"]
-# iO1 reuses the three 0x09 setter fields, but they address three treble
-# crossover bands rather than the generic Treble/Mid/Bass controls.
-# Keep the legacy state/unique-id keys so existing HA entities are renamed
-# in place instead of being duplicated during upgrade.
+# Keep the legacy state/unique-id keys so existing HA entities are renamed in
+# place instead of being duplicated during upgrade.
 IO1_EQ_BANDS = (
-    ("Treble Low 2 kHz", "dsp_treble", IO1_TREBLE_LOW_FIELD, "treble"),
-    ("Treble Mid 4 kHz", "dsp_mid", IO1_TREBLE_MID_FIELD, "mid"),
-    ("Treble High 6 kHz", "dsp_bass", IO1_TREBLE_HIGH_FIELD, "bass"),
+    ("Treble Low 2 kHz", "dsp_treble", IO1_TREBLE_LOW_BAND, "treble"),
+    ("Treble Mid 4 kHz", "dsp_mid", IO1_TREBLE_MID_BAND, "mid"),
+    ("Treble High 6 kHz", "dsp_bass", IO1_TREBLE_HIGH_BAND, "bass"),
 )
 OUT_OPTIONS = ["Mono", "Stereo", "Left", "Right"]
 HP_OPTIONS = ["60 Hz", "80 Hz", "100 Hz", "120 Hz"]

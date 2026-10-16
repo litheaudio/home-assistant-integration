@@ -247,6 +247,7 @@ class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
             if entry.data[CONF_PRODUCT] == PRODUCT_IO1
             else EQ_PRESETS
         )
+        self._io1 = entry.data[CONF_PRODUCT] == PRODUCT_IO1
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_eq"
         self._current = self._attr_options[0]
         self._optimistic_until: float = 0.0
@@ -279,7 +280,10 @@ class LitheEqSelect(_LitheBaseSelect, RestoreEntity):
         idx = self._attr_options.index(option) if option in self._attr_options else 0
         self._current = option
         self._optimistic_until = time.monotonic() + 5.0
-        await self._client.async_dsp_command(DSP_EQ, idx)
+        if self._io1:
+            await self._client.async_io1_preset_command(idx)
+        else:
+            await self._client.async_dsp_command(DSP_EQ, idx)
         self.async_write_ha_state()
 
 

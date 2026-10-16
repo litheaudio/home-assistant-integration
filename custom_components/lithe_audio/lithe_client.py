@@ -16,7 +16,7 @@ from urllib.parse import unquote, urlparse
 import aiohttp
 
 from .const import (
-    DEFAULT_PORT, MB_AUDIOCUE, MB_BLUETOOTH, MB_BROWSE, MB_CHIME,
+    BT_MCU_STATE, DEFAULT_PORT, MB_AUDIOCUE, MB_BLUETOOTH, MB_BROWSE, MB_CHIME,
     MB_DEVICE_INFO, MB_DEVICE_NAME, MB_DSP, MB_FACTORY_RESET, MB_FAVOURITES,
     MB_FIRMWARE, MB_INTERFACE_IP, MB_MUTE, MB_NETWORK_INFO, MB_NETWORK_STATUS,
     MB_NOW_PLAYING, MB_PLAY_STATE, MB_PLAYBACK_AUTH, MB_PLAYBACK_GRANT,
@@ -28,7 +28,8 @@ from .const import (
     TRANSPORT_STOP,
     DSP_BALANCE, DSP_EQ, DSP_EQ_BANDS, DSP_LOUDNESS, DSP_NIGHTMODE,
     DSP_OUTPUT, DSP_REMOTE_ID, DSP_STATUS_ALL, DSP_TUNNEL_PORT,
-    IO1_TREBLE_HIGH_FIELD, IO1_TREBLE_LOW_FIELD, IO1_TREBLE_MID_FIELD,
+    IO1_PRESET, IO1_TREBLE_GAIN,
+    IO1_TREBLE_HIGH_BAND, IO1_TREBLE_LOW_BAND, IO1_TREBLE_MID_BAND,
     LS10_FIXED_EQ_PRESET_BANDS,
     PRODUCT_IO1, PRODUCT_MICRO, PRODUCT_PRO2, PRODUCT_V3,
     SUB_DSP_CROSSOVER, SUB_DSP_GAIN, SUB_DSP_LOWPASS,
@@ -813,9 +814,9 @@ class LitheClient:
         if command in ("ON", "OFF"):
             enabled = command == "ON"
             if self.use_tls:
-                # LS10 speakers do not expose the legacy LS9 web endpoint.
-                # MB#209 changes the source and MB#50 reports the result.
-                await self._async_bluetooth_luci_fallback(command, enabled)
+                # Current Lithe apps control LS10 Bluetooth through the raw
+                # HOST-MCU tunnel, not LUCI MB#209.
+                await self._async_bluetooth_mcu_tunnel(enabled)
                 return
             url = f"http://{self.host}/goform/SetBluetoothmode"
             value = "Bluetooth_ON" if enabled else "Bluetooth_OFF"
@@ -906,6 +907,52 @@ class LitheClient:
         # Pairing and disconnect remain LUCI MB#209 operations; the HTTP
         # endpoint only defines service ON/OFF.
         await self._send(0x02, MB_BLUETOOTH, command)
+
+    async def _async_bluetooth_mcu_tunnel(self, enabled: bool) -> None:
+        """Set LS10 Bluetooth using the app payload over the LUCI MCU carrier."""
+        value = 1 if enabled else 0
+        setter = bytes([
+            0x00, 0x04, (BT_MCU_STATE + 0x02 + value) & 0xFF,
+            BT_MCU_STATE, 0x02, value,
+        ])
+        getter = bytes([
+            0x00, 0x03, (BT_MCU_STATE + 0x01) & 0xFF,
+            BT_MCU_STATE, 0x01,
+        ])
+        self._bluetooth_target = enabled
+        self._bluetooth_target_until = time.monotonic() + 5.0
+        self.state.bt_enabled = enabled
+        self.state.bt_status = "Bluetooth_ON" if enabled else "Bluetooth_OFF"
+        self._notify()
+        try:
+            # This speaker rejects attempts to create another raw MB#111
+            # listener while its MCU tunnel is occupied. MB#112 is the working
+            # LUCI carrier used by HA's audible EQ writes, so carry the exact
+            # app packet through it without opening or locking port 4444.
+            for payload in (setter, getter):
+                header = struct.pack(
+                    "<HBHBHH",
+                    DSP_REMOTE_ID,
+                    0x02,
+                    MB_DSP,
+                    0,
+                    0x0000,
+                    len(payload),
+                )
+                await self._write_packet(header + payload + b"\x00")
+                await asyncio.sleep(0.1)
+            _LOGGER.info(
+                "Bluetooth MCU command %s sent through MB#112 on %s",
+                "ON" if enabled else "OFF",
+                self.host,
+            )
+        except Exception as err:
+            _LOGGER.warning(
+                "Bluetooth MCU command %s failed on %s: %s",
+                "ON" if enabled else "OFF",
+                self.host,
+                err,
+            )
 
     async def _async_bluetooth_luci_fallback(
         self, command: str, enabled: bool
@@ -1180,6 +1227,90 @@ class LitheClient:
             if sub_mb == DSP_EQ and self.state.connected:
                 self._schedule_dsp_readback()
 
+    @staticmethod
+    def _build_io1_tunnel_packet(
+        command: int, payload: bytes, field: int = 0x02
+    ) -> bytes:
+        """Build the variable-length packet used by iO1 MCU controls."""
+        body = bytes([command & 0xFF, field & 0xFF]) + payload
+        # Length includes checksum + command/field/payload, but excludes the
+        # two-byte length prefix itself (TunnelCommandUtils.getPacket).
+        return bytes([0x00, len(body) + 1, sum(body) & 0xFF]) + body
+
+    async def _async_io1_command(self, command: int, payload: bytes) -> bytes:
+        """Send an iO1 command on the same raw tunnel used by the app."""
+        packet = self._build_io1_tunnel_packet(command, payload)
+        response = b""
+        tunnel_writer: asyncio.StreamWriter | None = None
+        try:
+            async with self._dsp_refresh_lock:
+                tunnel_reader, tunnel_writer = await self._async_open_dsp_tunnel()
+                tunnel_writer.write(packet)
+                await tunnel_writer.drain()
+                try:
+                    response = await asyncio.wait_for(
+                        tunnel_reader.read(4096), timeout=0.75
+                    )
+                except asyncio.TimeoutError:
+                    pass
+        except Exception as err:
+            # Preserve the existing MB112 route for firmware that does not
+            # expose the app's raw TCP listener.
+            _LOGGER.debug(
+                "iO1 DSP tunnel unavailable; using MB112 fallback: %s", err
+            )
+            header = struct.pack(
+                "<HBHBHH", DSP_REMOTE_ID, 0x02, MB_DSP, 0, 0x0000,
+                len(packet),
+            )
+            if self._writer and not self._writer.is_closing():
+                await self._write_packet(header + packet + b"\x00")
+        finally:
+            if tunnel_writer is not None:
+                tunnel_writer.close()
+                try:
+                    await tunnel_writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
+
+        if response:
+            self._handle_push(MB_DSP, response, DSP_REMOTE_ID)
+        return response
+
+    async def async_io1_eq_command(self, band: int, value: int) -> None:
+        """Set one iO1 2/4/6 kHz band using [band, gain + 6]."""
+        band = max(IO1_TREBLE_LOW_BAND, min(IO1_TREBLE_HIGH_BAND, int(band)))
+        value = max(-6, min(6, int(value)))
+        revision_before = self.state.dsp_feedback_revision
+        await self._async_io1_command(
+            IO1_TREBLE_GAIN, bytes([band, value + 6])
+        )
+        if self.state.dsp_feedback_revision == revision_before:
+            attr = {
+                IO1_TREBLE_LOW_BAND: "dsp_treble",
+                IO1_TREBLE_MID_BAND: "dsp_mid",
+                IO1_TREBLE_HIGH_BAND: "dsp_bass",
+            }[band]
+            setattr(self.state, attr, value)
+            self.state.dsp_state_source = "local"
+            self.state.dsp_feedback_revision += 1
+            self._notify()
+        if self.state.connected:
+            self._schedule_dsp_readback()
+
+    async def async_io1_preset_command(self, preset: int) -> None:
+        """Set the dedicated iO1 Outdoor/Indoor/Pendent preset."""
+        preset = max(0, min(2, int(preset)))
+        revision_before = self.state.dsp_feedback_revision
+        await self._async_io1_command(IO1_PRESET, bytes([preset]))
+        if self.state.dsp_feedback_revision == revision_before:
+            self.state.dsp_eq = preset
+            self.state.dsp_state_source = "local"
+            self.state.dsp_feedback_revision += 1
+            self._notify()
+        if self.state.connected:
+            self._schedule_dsp_readback()
+
     def _schedule_dsp_readback(self) -> None:
         """Debounce a live readback after a preset changes derived EQ bands."""
         if self._dsp_readback_task and not self._dsp_readback_task.done():
@@ -1210,8 +1341,7 @@ class LitheClient:
             DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS,
             DSP_HIGHPASS, DSP_LOUDNESS, DSP_LOUDNESS_GAIN,
             DSP_MID_FIELD, DSP_NIGHTMODE, DSP_OUTPUT,
-            DSP_TREBLE_FIELD, DSP_TUNING, IO1_TREBLE_HIGH_FIELD,
-            IO1_TREBLE_LOW_FIELD, IO1_TREBLE_MID_FIELD,
+            DSP_TREBLE_FIELD, DSP_TUNING,
             PRODUCT_MICRO, SUB_DSP_CROSSOVER, SUB_DSP_GAIN,
             SUB_DSP_LOWPASS, SUB_DSP_PHASE, SUB_DSP_PROFILE,
         )
@@ -1231,9 +1361,6 @@ class LitheClient:
                 DSP_BASS_FIELD: "dsp_bass",
                 DSP_MID_FIELD: "dsp_mid",
                 DSP_TREBLE_FIELD: "dsp_treble",
-                IO1_TREBLE_HIGH_FIELD: "dsp_bass",
-                IO1_TREBLE_MID_FIELD: "dsp_mid",
-                IO1_TREBLE_LOW_FIELD: "dsp_treble",
             }.get(field)
         else:
             attr = {
@@ -1287,20 +1414,29 @@ class LitheClient:
             _LOGGER.debug("DSP live refresh skipped because writer is unavailable")
             return False
 
-        def _get_packet(sub_mb: int, field: int = 0x01) -> bytes:
-            checksum = (sub_mb + field) & 0xFF
-            return bytes([0x00, 0x03, checksum, sub_mb, field])
+        def _get_packet(
+            sub_mb: int, field: int = 0x01, payload: bytes = b""
+        ) -> bytes:
+            body = bytes([sub_mb & 0xFF, field & 0xFF]) + payload
+            return bytes([0x00, len(body) + 1, sum(body) & 0xFF]) + body
 
         requests = [_get_packet(DSP_STATUS_ALL)]
         if self.product == PRODUCT_IO1:
-            # iO1 does not consistently include its three crossover bands in
-            # All_informationGET. The Lithe app follows the combined request
-            # with the odd-numbered getter paired with each even setter.
+            # The app selects each 2/4/6 kHz band through TREBLE_GAIN_GET and
+            # receives [band index, unsigned gain+6].  The ordinary 0x09
+            # Treble/Mid/Bass getters are PRO/V3 commands and are only echoed
+            # by iO1 firmware.
             requests.extend((
-                _get_packet(DSP_EQ_BANDS, IO1_TREBLE_LOW_FIELD - 1),
-                _get_packet(DSP_EQ_BANDS, IO1_TREBLE_MID_FIELD - 1),
-                _get_packet(DSP_EQ_BANDS, IO1_TREBLE_HIGH_FIELD - 1),
-                _get_packet(DSP_EQ),
+                _get_packet(
+                    IO1_TREBLE_GAIN, payload=bytes([IO1_TREBLE_LOW_BAND])
+                ),
+                _get_packet(
+                    IO1_TREBLE_GAIN, payload=bytes([IO1_TREBLE_MID_BAND])
+                ),
+                _get_packet(
+                    IO1_TREBLE_GAIN, payload=bytes([IO1_TREBLE_HIGH_BAND])
+                ),
+                _get_packet(IO1_PRESET),
                 _get_packet(DSP_BALANCE),
                 _get_packet(DSP_OUTPUT),
             ))
@@ -1309,9 +1445,6 @@ class LitheClient:
             try:
                 tunnel_reader, tunnel_writer = await self._async_open_dsp_tunnel()
 
-                for request in requests:
-                    tunnel_writer.write(request)
-                await tunnel_writer.drain()
                 _LOGGER.debug(
                     "TX DSP tunnel live-state requests %s",
                     ", ".join(
@@ -1321,18 +1454,37 @@ class LitheClient:
                 )
 
                 chunks: list[bytes] = []
-                deadline = asyncio.get_running_loop().time() + 3.0
-                while asyncio.get_running_loop().time() < deadline:
-                    timeout = 1.0 if not chunks else 0.45
-                    try:
-                        chunk = await asyncio.wait_for(
-                            tunnel_reader.read(4096), timeout=timeout
-                        )
-                    except asyncio.TimeoutError:
-                        break
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
+                if self.product == PRODUCT_IO1:
+                    # iO1 drops later requests when several are written before
+                    # the previous response is consumed. This mirrors the app:
+                    # select one band, read it, then select the next band.
+                    for request in requests:
+                        tunnel_writer.write(request)
+                        await tunnel_writer.drain()
+                        try:
+                            chunk = await asyncio.wait_for(
+                                tunnel_reader.read(4096), timeout=0.75
+                            )
+                        except asyncio.TimeoutError:
+                            continue
+                        if chunk:
+                            chunks.append(chunk)
+                else:
+                    for request in requests:
+                        tunnel_writer.write(request)
+                    await tunnel_writer.drain()
+                    deadline = asyncio.get_running_loop().time() + 3.0
+                    while asyncio.get_running_loop().time() < deadline:
+                        timeout = 1.0 if not chunks else 0.45
+                        try:
+                            chunk = await asyncio.wait_for(
+                                tunnel_reader.read(4096), timeout=timeout
+                            )
+                        except asyncio.TimeoutError:
+                            break
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
 
                 if chunks:
                     raw = b"".join(chunks)
@@ -1357,15 +1509,41 @@ class LitheClient:
                         # Some LS10 builds answer unrelated controls but omit
                         # every EQ field.  That partial response must not be
                         # reported as a successful EQ synchronisation.
-                        response_subcommands = {
-                            raw[index + 3]
-                            for index in range(max(0, len(raw) - 4))
-                            if raw[index] == 0x00
-                            and raw[index + 1] in (0x04, 0x05)
-                        }
-                        eq_state_present = {
-                            DSP_EQ_BANDS, DSP_EQ
-                        }.issubset(response_subcommands)
+                        response_subcommands: set[int] = set()
+                        io1_bands: set[int] = set()
+                        index = 0
+                        while index + 5 <= len(raw):
+                            packet_length = int.from_bytes(
+                                raw[index:index + 2], "big"
+                            ) + 2
+                            if (
+                                raw[index] == 0x00
+                                and packet_length >= 5
+                                and index + packet_length <= len(raw)
+                            ):
+                                command = raw[index + 3]
+                                response_subcommands.add(command)
+                                if (
+                                    command == IO1_TREBLE_GAIN
+                                    and packet_length >= 7
+                                ):
+                                    io1_bands.add(raw[index + 5])
+                                index += packet_length
+                            else:
+                                index += 1
+                        if self.product == PRODUCT_IO1:
+                            eq_state_present = (
+                                IO1_PRESET in response_subcommands
+                                and io1_bands == {
+                                    IO1_TREBLE_LOW_BAND,
+                                    IO1_TREBLE_MID_BAND,
+                                    IO1_TREBLE_HIGH_BAND,
+                                }
+                            )
+                        else:
+                            eq_state_present = {
+                                DSP_EQ_BANDS, DSP_EQ
+                            }.issubset(response_subcommands)
                         if not eq_state_present:
                             _LOGGER.debug(
                                 "LS10 DSP report from %s omitted EQ preset/bands; "
@@ -1740,20 +1918,28 @@ class LitheClient:
                 pass
             else:
                 bluetooth_enabled = source_id == 19
-                pending_future = self._pending_bluetooth_future
-                target = self._bluetooth_target
-                target_pending = (
-                    pending_future is not None
-                    and not pending_future.done()
-                    and target is not None
-                )
-                if not target_pending or bluetooth_enabled == target:
-                    self.state.bt_enabled = bluetooth_enabled
-                    self.state.bt_status = (
-                        "Bluetooth_ON" if bluetooth_enabled else "Bluetooth_OFF"
+                if self.use_tls:
+                    # On LS10, Bluetooth service state is independent of the
+                    # active playback source. Source 19 proves it is enabled,
+                    # but Spotify/URL/AirPlay must not be treated as disabled.
+                    if bluetooth_enabled:
+                        self.state.bt_enabled = True
+                        self.state.bt_status = "Bluetooth_ON"
+                else:
+                    pending_future = self._pending_bluetooth_future
+                    target = self._bluetooth_target
+                    target_pending = (
+                        pending_future is not None
+                        and not pending_future.done()
+                        and target is not None
                     )
-                if target_pending and bluetooth_enabled == target:
-                    pending_future.set_result(bluetooth_enabled)
+                    if not target_pending or bluetooth_enabled == target:
+                        self.state.bt_enabled = bluetooth_enabled
+                        self.state.bt_status = (
+                            "Bluetooth_ON" if bluetooth_enabled else "Bluetooth_OFF"
+                        )
+                    if target_pending and bluetooth_enabled == target:
+                        pending_future.set_result(bluetooth_enabled)
                 if source_id != self.state.source_id:
                     old_source = self.state.source_id
                     self.state.source_id = source_id
@@ -1900,8 +2086,9 @@ class LitheClient:
             # Payload is binary DSP sub-packet(s) — see vendor packet
             # capture for the on-wire format.
             #
-            # GET request     (5 bytes): 00 03 <subMB_hi> <subMB_lo> <field>
-            # State response  (6 bytes): 00 04 <subMB_hi> <subMB_lo> field value
+            # The first two bytes contain the big-endian packet length minus
+            # those two bytes. Most controls are 5/6 bytes total; iO1 treble
+            # gain responses are 7 bytes because their payload is [band,gain].
             #
             # Multiple sub-packets may be concatenated in one MB#112 frame.
             # We populate state.dsp_* fields so HA entities (selects,
@@ -1909,7 +2096,7 @@ class LitheClient:
             # — 2-way sync.
             try:
                 from .const import (
-                    DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS,
+                    BT_MCU_STATE, DSP_BALANCE, DSP_BASS_FIELD, DSP_EQ, DSP_EQ_BANDS,
                     DSP_HIGHPASS, DSP_LOUDNESS, DSP_LOUDNESS_GAIN,
                     DSP_MID_FIELD, DSP_NIGHTMODE,
                     DSP_OUTPUT, DSP_TREBLE_FIELD, DSP_TUNING,
@@ -1928,6 +2115,8 @@ class LitheClient:
                     return 1 if b in (1, 0x31) else 0
                 def _loudness_gain_feedback(b: int) -> int:
                     return b - 10
+                def _bluetooth(b: int) -> bool:
+                    return b in (1, 0x31)
 
                 _DSP_MAP: dict[int, tuple[str, callable]] = {
                     DSP_EQ:        ("dsp_eq",        _unsigned),
@@ -1940,6 +2129,7 @@ class LitheClient:
                     DSP_OUTPUT:    ("dsp_output",    _unsigned),
                     DSP_HIGHPASS:  ("dsp_highpass",  _unsigned),
                     DSP_TUNING:    ("dsp_tuning",    _boolean),
+                    BT_MCU_STATE:  ("bt_enabled",    _bluetooth),
                 }
                 if self.product == PRODUCT_MICRO:
                     _DSP_MAP = {
@@ -1966,49 +2156,65 @@ class LitheClient:
                 updates: list[tuple[str, int]] = []
                 i = 0
                 while i + 5 <= len(raw):
-                    # GET request echo. This is not state: the final byte is
-                    # a field/request ID, not the current setting value.
-                    if raw[i] == 0x00 and raw[i+1] == 0x03 and i + 5 <= len(raw):
-                        sub_mb = (raw[i+2] << 8) | raw[i+3]
-                        if sub_mb > 0xFF:
-                            sub_mb = raw[i+3]
-                        else:
-                            sub_mb = sub_mb if sub_mb else raw[i+3]
-                        val_byte = raw[i+4]
-                        parsed.append(
-                            f"get-request sub=0x{sub_mb:02x} field={val_byte}"
-                        )
-                        i += 5
-                    # SET response / GET response — 00 04 <subMB hi> <subMB lo> [status] <value>
-                    elif raw[i] == 0x00 and raw[i+1] == 0x04 and i + 6 <= len(raw):
-                        sub_mb = raw[i+3]  # low byte; high byte is 0
-                        field = raw[i+4]
-                        val_byte = raw[i+5]
-                        parsed.append(
-                            f"resp sub=0x{sub_mb:02x} field=0x{field:02x} val={val_byte}"
-                        )
-                        if (sub_mb, field) in _DSP_FIELD_MAP:
-                            attr, decode = _DSP_FIELD_MAP[(sub_mb, field)]
-                            updates.append((attr, decode(val_byte)))
-                        elif sub_mb in _DSP_MAP:
-                            attr, decode = _DSP_MAP[sub_mb]
-                            updates.append((attr, decode(val_byte)))
-                        i += 6
-                    # GET response variant: 00 05 <hi> <lo> <value> (5 bytes)
-                    elif raw[i] == 0x00 and raw[i+1] == 0x05 and i + 5 <= len(raw):
-                        sub_mb = raw[i+3]
-                        val_byte = raw[i+4]
-                        parsed.append(f"get-resp sub=0x{sub_mb:02x}({sub_mb}) val={val_byte}")
-                        if sub_mb in _DSP_MAP:
-                            attr, decode = _DSP_MAP[sub_mb]
-                            updates.append((attr, decode(val_byte)))
-                        i += 5
-                    else:
+                    packet_length = int.from_bytes(raw[i:i + 2], "big") + 2
+                    if (
+                        raw[i] != 0x00
+                        or packet_length < 5
+                        or i + packet_length > len(raw)
+                    ):
                         i += 1
+                        continue
+
+                    packet = raw[i:i + packet_length]
+                    sub_mb = packet[3]
+                    field = packet[4]
+                    values = packet[5:]
+                    i += packet_length
+
+                    # A five-byte GET request may be echoed by the MCU. It
+                    # carries no setting value and must never make an entity
+                    # available.
+                    if not values:
+                        parsed.append(
+                            f"get-request sub=0x{sub_mb:02x} field={field}"
+                        )
+                        continue
+
+                    parsed.append(
+                        f"resp sub=0x{sub_mb:02x} field=0x{field:02x} "
+                        f"payload={' '.join(f'{value:02X}' for value in values)}"
+                    )
+
+                    if self.product == PRODUCT_IO1 and sub_mb == IO1_TREBLE_GAIN:
+                        if len(values) >= 2:
+                            band, wire_gain = values[0], values[1]
+                            attr = {
+                                IO1_TREBLE_LOW_BAND: "dsp_treble",
+                                IO1_TREBLE_MID_BAND: "dsp_mid",
+                                IO1_TREBLE_HIGH_BAND: "dsp_bass",
+                            }.get(band)
+                            if attr is not None and 0 <= wire_gain <= 12:
+                                updates.append((attr, wire_gain - 6))
+                        continue
+                    if self.product == PRODUCT_IO1 and sub_mb == IO1_PRESET:
+                        updates.append(("dsp_eq", values[-1]))
+                        continue
+
+                    val_byte = values[-1]
+                    if (sub_mb, field) in _DSP_FIELD_MAP:
+                        attr, decode = _DSP_FIELD_MAP[(sub_mb, field)]
+                        updates.append((attr, decode(val_byte)))
+                    elif sub_mb in _DSP_MAP:
+                        attr, decode = _DSP_MAP[sub_mb]
+                        updates.append((attr, decode(val_byte)))
 
                 # Apply state updates
                 for attr, val in updates:
                     setattr(self.state, attr, val)
+                    if attr == "bt_enabled":
+                        self.state.bt_status = (
+                            "Bluetooth_ON" if val else "Bluetooth_OFF"
+                        )
 
                 # PRO 2/V3 reports retain the Normal/manual band registers
                 # while a fixed preset is selected.  The Lithe app renders

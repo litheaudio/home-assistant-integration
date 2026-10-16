@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.4.102
+
+- Use the app-confirmed iO1 EQ protocol: command `0x25` with a band index and
+  `gain + 6`, plus the dedicated `0x27` Outdoor/Indoor/Pendent preset.
+- Read the 2 kHz, 4 kHz and 6 kHz bands sequentially at startup because iO1
+  firmware drops later requests when they are batched before each response.
+- Decode variable-length iO1 feedback and ignore five-byte getter echoes so
+  Home Assistant only enables the sliders after authoritative speaker state.
+
+## 1.4.101
+
+- Restore the pre-Bluetooth LS10 EQ refresh command sequence after live HA
+  logs showed repeated `FAILED TO START TCP TUNNEL SERVER` responses.
+- Isolate Bluetooth from EQ: Bluetooth now carries the app-sniffed `20 02`
+  setter and `20 01` getter through the existing working MB#112 MCU carrier,
+  without opening or locking the EQ raw tunnel.
+- Keep decoding live Bluetooth MCU feedback while preventing Bluetooth
+  startup reads from changing the EQ startup request/response flow.
+
+## 1.4.100
+
+- Replace the ineffective LS10 Bluetooth MB#209 command with the exact raw
+  HOST-MCU tunnel packets recovered from Lithe app `1.7.5.22`: opcode `0x20`,
+  setter field `0x02`, and values `1`/`0` for on/off.
+- Read Bluetooth state with the app's `20 01` getter during startup refresh
+  and after every change, and decode the MCU response into the HA switch.
+- Keep Bluetooth service state independent from the active playback source;
+  selecting Spotify, URL or AirPlay no longer incorrectly switches it off.
+
 ## 1.4.99
 
 - Remove the Bluetooth switch from Micro Subwoofer devices.

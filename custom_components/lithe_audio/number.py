@@ -141,6 +141,7 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
         self._attr_unique_id = f"{entry.data['host']}_{entry.entry_id}_{key}"
         self._state_attr = state_attr
         self._field = field
+        self._io1 = entry.data[CONF_PRODUCT] == PRODUCT_IO1
         self._minimum = minimum
         self._maximum = maximum
         self._lock_to_normal = lock_to_normal
@@ -194,7 +195,12 @@ class LitheEqBandNumber(_LitheBaseNumber, RestoreEntity):
             return
         self._value = max(self._minimum, min(self._maximum, int(value)))
         self._optimistic_until = time.monotonic() + 5.0
-        await self._client.async_dsp_command(DSP_EQ_BANDS, self._value, self._field)
+        if self._io1:
+            await self._client.async_io1_eq_command(self._field, self._value)
+        else:
+            await self._client.async_dsp_command(
+                DSP_EQ_BANDS, self._value, self._field
+            )
         self.async_write_ha_state()
 
 

@@ -231,8 +231,8 @@ class LitheHighPassProtectionSwitch(_LitheBaseSwitch):
 class LitheBluetoothSwitch(_LitheBaseSwitch):
     """Bluetooth enable/disable switch (all products).
 
-    Service ON/OFF uses the confirmed SetBluetoothmode HTTP endpoint on LS9.
-    LS10 uses LUCI MB#209 and verifies the resulting source through MB#50.
+    Service ON/OFF uses the legacy SetBluetoothmode HTTP endpoint on LS9.
+    LS10 uses the same raw HOST-MCU tunnel command as the current Lithe app.
     """
 
     _attr_name = "Inputs — Bluetooth"
@@ -272,7 +272,7 @@ class LitheBluetoothSwitch(_LitheBaseSwitch):
 
     async def async_turn_on(self, **kwargs) -> None:
         import time
-        # Set optimistic state while waiting for MB#50 source feedback.
+        # Set optimistic state while waiting for MCU state feedback.
         self._optimistic_state = True
         self._optimistic_until = time.monotonic() + 3.0
         self.async_write_ha_state()
