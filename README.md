@@ -2,7 +2,7 @@
 
 Direct, local control of Lithe Audio Wi-Fi speakers over the LUCI protocol on port 7777. No cloud, no bridge process, no portal — Home Assistant talks to each speaker directly.
 
-**Latest: 1.4.97** — labels URL, prayer and alarm playback on the HA player while retaining the Spotify and stale-metadata fixes from 1.4.96.
+**Latest: 1.4.99** — removes Bluetooth from Micro Subwoofer and fixes Bluetooth switching on supported speakers using MB#209 control with MB#50 source feedback.
 
 ---
 

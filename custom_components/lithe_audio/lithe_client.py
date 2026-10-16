@@ -16,13 +16,13 @@ from urllib.parse import unquote, urlparse
 import aiohttp
 
 from .const import (
-    DEFAULT_PORT, MB_AUDIOCUE, MB_BLUETOOTH, MB_BROWSE, MB_BT_STATUS, MB_CHIME,
+    DEFAULT_PORT, MB_AUDIOCUE, MB_BLUETOOTH, MB_BROWSE, MB_CHIME,
     MB_DEVICE_INFO, MB_DEVICE_NAME, MB_DSP, MB_FACTORY_RESET, MB_FAVOURITES,
     MB_FIRMWARE, MB_INTERFACE_IP, MB_MUTE, MB_NETWORK_INFO, MB_NETWORK_STATUS,
     MB_NOW_PLAYING, MB_PLAY_STATE, MB_PLAYBACK_AUTH, MB_PLAYBACK_GRANT,
     MB_POSITION, MB_TUNNEL_START,
     MB_REGISTER, MB_RSSI, MB_SOURCE, MB_TIMEZONE, MB_TRANSPORT, MB_VOLUME,
-    MAX_CHIME_SLOT, MUTE_OFF, MUTE_ON, NETWORK_STATUS, PLAY_STATES, SOURCES,
+    MAX_CHIME_SLOT, NETWORK_STATUS, PLAY_STATES, SOURCES,
     TRANSPORT_NEXT,
     TRANSPORT_PAUSE, TRANSPORT_PLAY, TRANSPORT_PREV, TRANSPORT_RESUME,
     TRANSPORT_STOP,
@@ -210,9 +210,8 @@ class LitheClient:
         self._dsp_initial_refresh_task: Optional[asyncio.Task] = None
         self._dsp_readback_task: Optional[asyncio.Task] = None
         self._last_nonzero_volume: int = self.state.volume
-        # Bluetooth ON/OFF is controlled by an HTTP endpoint. Serialize those
-        # requests and retain the requested state briefly so delayed MB#210
-        # packets cannot undo a freshly verified web setting.
+        # Serialize Bluetooth changes and retain their target while the
+        # speaker reports the resulting source through MB#50.
         self._bluetooth_lock = asyncio.Lock()
         self._bluetooth_target: bool | None = None
         self._bluetooth_target_until: float = 0.0
@@ -405,7 +404,7 @@ class LitheClient:
 
         NOTE: empirically this firmware responds to GETs on several Tx_-only
         mailboxes (MB#42 Now Playing, MB#50 Source, MB#51 Play State,
-        MB#49 Position, MB#210 BT Status) even though the
+        MB#49 Position) even though the
         spec marks them as push-only. We send them because they're the
         only way to get the speaker's current state on connect or after
         a stale period — the spec-only "push on change" never fires if
@@ -427,16 +426,6 @@ class LitheClient:
                    MB_TIMEZONE):        # 573 TimeZone
             await self._send(0x01, mb, "")
             await asyncio.sleep(0.05)
-
-        # Bluetooth is a LUCI radio service, so query it on the standard
-        # application route used by the Lithe app and MB#209 commands.
-        await self._send(
-            0x01,
-            MB_BT_STATUS,
-            "",
-            remote_id=0xAAAA,
-        )
-        await asyncio.sleep(0.05)
 
         # The TechNote specifies RID 0xAAAA for MB#151, while current Lithe
         # app traffic commonly uses RID 0x0000. Some LS10 firmware only
@@ -536,24 +525,12 @@ class LitheClient:
 
     # ── Commands ───────────────────────────────────────────────────────────
 
-    def _mute_remote_id(self) -> int:
-        """Return the source-specific LUCI route for MB#40 mute commands."""
-        # Spotify Connect and AirPlay accept the normal app route. Cast ignores
-        # MB#40 on that route, but applies the same command through the MCU route.
-        return 0x0000 if self.state.source_id == 24 else 0xAAAA
-
     async def async_set_volume(self, level: int) -> None:
         # RID 0x0000 reaches the MCU gain write. RID 0xAAAA may only update
         # the LS-side state without changing audible volume.
         level = max(0, min(100, level))
         if level > 0:
             self._last_nonzero_volume = level
-        if level > 0 and self.state.muted:
-            await self._send(
-                0x02, MB_TRANSPORT, MUTE_OFF,
-                remote_id=self._mute_remote_id(),
-            )
-            await asyncio.sleep(0.25)
         await self._send(
             0x02,
             MB_VOLUME,
@@ -561,20 +538,18 @@ class LitheClient:
             remote_id=0x0000,
         )
         self.state.volume = level
+        self.state.muted = level == 0
+        self.state.mute_state_known = True
         self._notify()
 
     async def async_mute(self, mute: bool) -> None:
-        """Mute / unmute speaker.
-
-        MB#40 PLAYCONTROL accepts the explicit MUTE/UNMUTE command. MB#63
-        CASTMUTE_STATUS is the sole authority for the resulting state.
-        """
-        await self._send(
-            0x02,
-            MB_TRANSPORT,
-            MUTE_ON if mute else MUTE_OFF,
-            remote_id=self._mute_remote_id(),
-        )
+        """Mute with volume zero and restore the previous level on unmute."""
+        if mute:
+            if self.state.volume > 0:
+                self._last_nonzero_volume = self.state.volume
+            await self.async_set_volume(0)
+            return
+        await self.async_set_volume(max(1, self._last_nonzero_volume or 50))
 
     async def async_play(self) -> None:
         await self._send(0x02, MB_TRANSPORT, TRANSPORT_PLAY)
@@ -839,8 +814,7 @@ class LitheClient:
             enabled = command == "ON"
             if self.use_tls:
                 # LS10 speakers do not expose the legacy LS9 web endpoint.
-                # Send the documented LUCI action and require MB#210 to
-                # confirm the real hardware state.
+                # MB#209 changes the source and MB#50 reports the result.
                 await self._async_bluetooth_luci_fallback(command, enabled)
                 return
             url = f"http://{self.host}/goform/SetBluetoothmode"
@@ -916,8 +890,7 @@ class LitheClient:
 
                 # A stale web flag or missing getbtvalue is not proof that the
                 # POST failed. Embedded web pages are cached on some builds.
-                # Confirm the requested state through the live LUCI path and
-                # ask MB#210 to push its current Bluetooth status.
+                # Confirm the requested state through the live LUCI path.
                 _LOGGER.warning(
                     "Bluetooth %s HTTP state on %s was %s; applying LUCI "
                     "MB#209 fallback",
@@ -937,45 +910,50 @@ class LitheClient:
     async def _async_bluetooth_luci_fallback(
         self, command: str, enabled: bool
     ) -> None:
-        """Apply Bluetooth through LUCI and require live MB#210 feedback."""
-        # MB#209/210 are LUCI radio controls. The normal application route is
-        # authoritative on LS10 too; the MCU route can ACK without changing
-        # the Bluetooth service.
+        """Apply Bluetooth through LUCI and verify its MB#50 source change."""
+        # The LUCI specification defines MB#209 ON/OFF as source actions and
+        # MB#50 as their status notification. MB#210 is DMR restart, not
+        # Bluetooth status, so polling it can leave the UI stuck or reversed.
         remote_id = 0xAAAA
         loop = asyncio.get_running_loop()
         future: asyncio.Future[bool] = loop.create_future()
         self._pending_bluetooth_future = future
         self._bluetooth_target = enabled
-        self._bluetooth_target_until = time.monotonic() + 2.0
+        self._bluetooth_target_until = time.monotonic() + 5.0
+        self.state.bt_enabled = enabled
+        self.state.bt_status = "Bluetooth_ON" if enabled else "Bluetooth_OFF"
+        self._notify()
         await self._send(0x02, MB_BLUETOOTH, command, remote_id=remote_id)
         await asyncio.sleep(0.15)
-        await self._send(0x01, MB_BT_STATUS, "", remote_id=remote_id)
+        await self._send(0x01, MB_SOURCE, "", remote_id=remote_id)
         try:
-            observed = await asyncio.wait_for(future, timeout=1.5)
+            observed = await asyncio.wait_for(future, timeout=2.0)
         except asyncio.TimeoutError:
             _LOGGER.warning(
-                "Bluetooth %s on %s was not confirmed by MB#210",
+                "Bluetooth %s on %s was not confirmed by MB#50",
                 command,
                 self.host,
             )
         else:
             if observed != enabled:
                 _LOGGER.warning(
-                    "Bluetooth %s on %s was rejected; MB#210 reports %s",
+                    "Bluetooth %s on %s was rejected; MB#50 reports %s",
                     command,
                     self.host,
                     "ON" if observed else "OFF",
                 )
             else:
                 _LOGGER.info(
-                    "Bluetooth %s confirmed on %s by MB#210",
+                    "Bluetooth %s confirmed on %s by MB#50",
                     command,
                     self.host,
                 )
         finally:
             if self._pending_bluetooth_future is future:
                 self._pending_bluetooth_future = None
-            self._bluetooth_target_until = 0.0
+            # Keep the requested state briefly if firmware delays MB#50. The
+            # coordinator's next source refresh will replace it with reality.
+            self._bluetooth_target_until = time.monotonic() + 3.0
 
     @staticmethod
     def _parse_bluetooth_http_state(body: str) -> bool | None:
@@ -1741,6 +1719,8 @@ class LitheClient:
                 self.state.volume = volume
                 if volume > 0:
                     self._last_nonzero_volume = volume
+                self.state.muted = volume == 0
+                self.state.mute_state_known = True
 
         elif mbid == MB_MUTE:
             mute_state = payload.strip().upper()
@@ -1759,6 +1739,21 @@ class LitheClient:
             except ValueError:
                 pass
             else:
+                bluetooth_enabled = source_id == 19
+                pending_future = self._pending_bluetooth_future
+                target = self._bluetooth_target
+                target_pending = (
+                    pending_future is not None
+                    and not pending_future.done()
+                    and target is not None
+                )
+                if not target_pending or bluetooth_enabled == target:
+                    self.state.bt_enabled = bluetooth_enabled
+                    self.state.bt_status = (
+                        "Bluetooth_ON" if bluetooth_enabled else "Bluetooth_OFF"
+                    )
+                if target_pending and bluetooth_enabled == target:
+                    pending_future.set_result(bluetooth_enabled)
                 if source_id != self.state.source_id:
                     old_source = self.state.source_id
                     self.state.source_id = source_id
@@ -1775,6 +1770,13 @@ class LitheClient:
 
         elif mbid == MB_PLAY_STATE:
             self.state.play_state = PLAY_STATES.get(payload.strip(), "stopped")
+            if self.state.play_state == "playing":
+                if not self.state.position_updated_at:
+                    self.state.position_updated_at = time.time()
+                asyncio.create_task(self._send(0x01, MB_POSITION, ""))
+            elif self.state.play_state == "stopped":
+                self.state.position_ms = 0
+                self.state.position_updated_at = 0.0
 
         elif mbid == MB_POSITION:
             try:
@@ -2030,42 +2032,6 @@ class LitheClient:
                     )
             except Exception as e:
                 _LOGGER.debug("DSP MB#112 parse error: %s", e)
-
-        elif mbid == MB_BT_STATUS:
-            self.state.bt_status = payload.strip()
-            bt = self.state.bt_status.upper()
-            reported: bool | None = None
-            if "OFF" in bt or bt.endswith(":0"):
-                reported = False
-            elif (
-                bt in {"ON", "1", "ENABLED", "BLUETOOTH_ON"}
-                or bt.startswith("ENTPAIR")
-                or "CONNECTED" in bt
-                or bt.endswith(":1")
-            ):
-                reported = True
-
-            # READY is a player/service status, not reliable radio-state
-            # feedback. In particular it can arrive after Bluetooth_OFF.
-            if reported is not None:
-                pending_future = self._pending_bluetooth_future
-                if pending_future is not None and not pending_future.done():
-                    self.state.bt_enabled = reported
-                    pending_future.set_result(reported)
-                    self._notify()
-                    return
-                target_pending = (
-                    self._bluetooth_target is not None
-                    and time.monotonic() < self._bluetooth_target_until
-                )
-                if target_pending and reported != self._bluetooth_target:
-                    _LOGGER.debug(
-                        "Ignoring stale MB#210 %r while Bluetooth target is %s",
-                        payload,
-                        "ON" if self._bluetooth_target else "OFF",
-                    )
-                else:
-                    self.state.bt_enabled = reported
 
         elif mbid == MB_TIMEZONE:
             self.state.timezone = payload.strip()

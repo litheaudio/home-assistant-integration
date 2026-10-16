@@ -443,7 +443,7 @@ PRODUCT_CAPS = {
         "loudness_number":  False,
         "loudness_switch":  False,
         "nightmode_switch": False,
-        "bluetooth_switch": True,
+        "bluetooth_switch": False,
         "cast_group_select": False,
         "spotify_target_select": False,
         "aux_in_switch":    False,

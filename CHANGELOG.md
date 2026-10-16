@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.99
+
+- Remove the Bluetooth switch from Micro Subwoofer devices.
+- Fix Bluetooth ON/OFF for supported speakers by sending the documented
+  MB#209 action and confirming the resulting Bluetooth source through MB#50.
+- Stop polling MB#210 as Bluetooth status; the protocol defines MB#210 as DMR
+  restart. Preserve the requested switch state while delayed MB#50 feedback
+  arrives and ignore stale source feedback during an active change.
+
+## 1.4.98
+
+- Fix the HA player timer remaining at `00:00`: a playing MB#51 update now
+  establishes a position timestamp and immediately requests MB#49, while the
+  media entity exposes a valid `0.0` starting position for HA to extrapolate.
+- Replace local speaker MB#40 mute/unmute with reliable MB#64 volume control.
+  Mute writes volume `0`; unmute restores the last confirmed non-zero volume.
+- Treat volume-zero feedback as muted state so the player icon remains in sync
+  with speaker volume changes.
+
 ## 1.4.97
 
 - Show integration-owned playback text on the HA player for Direct URL,

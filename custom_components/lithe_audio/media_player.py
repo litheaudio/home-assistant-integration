@@ -308,7 +308,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
             if value is not None:
                 return bool(value)
         state = self._client.state
-        return state.muted if state.mute_state_known else None
+        # Local Lithe mute is deliberately implemented as volume zero because
+        # MB#40 MUTE/UNMUTE is unreliable on current LS9 and LS10 firmware.
+        return state.volume == 0
 
     @property
     def source(self) -> str | None:
@@ -518,7 +520,9 @@ class LitheAudioMediaPlayer(CoordinatorEntity[LitheAudioCoordinator], MediaPlaye
         speaker push to a whole second repeatedly moved that clock backwards.
         """
         p = self._client.state.position_ms
-        return self._client.state.position_seconds if p else None
+        if p or self._client.state.play_state == "playing":
+            return self._client.state.position_seconds
+        return None
 
     @property
     def media_position_updated_at(self):
