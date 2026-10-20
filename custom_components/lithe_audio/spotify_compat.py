@@ -74,7 +74,7 @@ def apply_spotifyaio_compat() -> bool:
     _from_json.__func__._lithe_spotify_compat = True  # type: ignore[attr-defined]
     Playlist.from_json = _from_json  # type: ignore[method-assign]
     _PATCHED = True
-    _LOGGER.warning(
+    _LOGGER.info(
         "Applied spotifyaio 2.0.2 playlist compatibility for Spotify's "
         "2026 items/item response schema"
     )

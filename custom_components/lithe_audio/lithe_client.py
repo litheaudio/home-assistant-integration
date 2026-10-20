@@ -208,6 +208,7 @@ class LitheClient:
         self._artwork_refresh_task: Optional[asyncio.Task] = None
         self._metadata_refresh_task: Optional[asyncio.Task] = None
         self._stale_direct_url_metadata: tuple[str, str, str, str] | None = None
+        self._reported_status_errors: set[tuple[int, int, str]] = set()
         self._dsp_initial_refresh_task: Optional[asyncio.Task] = None
         self._dsp_readback_task: Optional[asyncio.Task] = None
         self._last_nonzero_volume: int = self.state.volume
@@ -1590,7 +1591,11 @@ class LitheClient:
                 0x02,
                 MB_TUNNEL_START,
                 str(DSP_TUNNEL_PORT),
-                remote_id=DSP_REMOTE_ID,
+                # MB#111 is handled by the registered LUCI service. The raw
+                # MCU stream itself uses RID 0x0000, but listener creation
+                # must retain the registered 0xAAAA ID. iO1 rejects RID 0x0000
+                # with "FAILED TO START TCP TUNNEL SERVER".
+                remote_id=0xAAAA,
             )
             await asyncio.sleep(0.2)
             return await asyncio.wait_for(
@@ -1753,9 +1758,18 @@ class LitheClient:
             )
 
             if status not in (0, 1):
-                _LOGGER.warning(
-                    "RX MB#%d returned status=%d (%s). RID=0x%04x payload=%r",
-                    mbid, status,
+                payload_excerpt = repr(payload[:80])
+                error_key = (mbid, status, payload_excerpt)
+                log = (
+                    _LOGGER.warning
+                    if error_key not in self._reported_status_errors
+                    else _LOGGER.debug
+                )
+                self._reported_status_errors.add(error_key)
+                log(
+                    "%s RX MB#%d returned status=%d (%s). RID=0x%04x "
+                    "payload=%r",
+                    self.host, mbid, status,
                     {2: "Generic error", 3: "Device not ready",
                      4: "CRC error"}.get(status, f"unknown ({status})"),
                     remote_id, payload[:80],
@@ -2373,6 +2387,12 @@ class LitheClient:
             "CoverArt", "coverart", "cover", "Cover", "Image", "image",
             "logo", "Logo", "Icon", "icon",
         )
+        art_path = art.lower().split("?", 1)[0].rstrip("/")
+        if art_path == "defaultart.jpg" or art_path.endswith("/defaultart.jpg"):
+            # LS10 advertises this placeholder even when the file does not
+            # exist (HTTP 404). Leave artwork empty so HA uses our local icon
+            # instead of repeatedly proxying a broken speaker URL.
+            art = ""
         if (
             self._stale_direct_url_metadata is not None
             and self._matches_stale_direct_url_metadata(incoming_track, art)

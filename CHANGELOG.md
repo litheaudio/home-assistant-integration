@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.103
+
+- Start the LS10/iO1 MB#111 DSP listener with the registered LUCI remote ID
+  `0xAAAA`. The previous MCU ID `0x0000` was rejected by iO1 firmware with
+  `FAILED TO START TCP TUNNEL SERVER`, preventing live startup EQ sync.
+- Keep the first protocol status error visible with the speaker IP, but move
+  identical repeats to debug logging so one device cannot flood the HA log.
+- Ignore the firmware's nonexistent `defaultArt.jpg` placeholder and use the
+  integration icon instead of repeatedly proxying an HTTP 404 image.
+- Log activation of the expected Spotify 2.0.2 compatibility shim at info
+  level instead of warning.
+
 ## 1.4.102
 
 - Use the app-confirmed iO1 EQ protocol: command `0x25` with a band index and
